@@ -1,21 +1,17 @@
 using System.Text.RegularExpressions;
-using Microsoft.EntityFrameworkCore;
-using Spiir.Api.Data;
+using Spiir.Api.Data.Repositories;
 
 namespace Spiir.Api.Features.Categorization;
 
 public class RuleBasedCategorizationEngine(
-    AppDbContext db,
+    CategorizationRuleRepository rules,
     ClaudeCategorizationFallback claudeFallback) : ICategorizationEngine
 {
     public async Task<Guid?> CategorizeAsync(string description, Guid userId, CancellationToken ct = default)
     {
-        var rules = await db.CategorizationRules
-            .OrderByDescending(r => r.Priority)
-            .ThenBy(r => r.Id)
-            .ToListAsync(ct);
+        var userRules = await rules.GetAllForUserOrderedAsync(userId, ct);
 
-        foreach (var rule in rules)
+        foreach (var rule in userRules)
         {
             bool matched = rule.IsRegex
                 ? Regex.IsMatch(description, rule.Pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)

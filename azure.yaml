@@ -1,0 +1,28 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+name: spiir
+metadata:
+  template: azd-init
+
+services:
+  api:
+    project: ./backend/Spiir.Api
+    language: dotnet
+    host: containerapp
+    docker:
+      path: ./backend/Spiir.Api/Dockerfile
+      context: ./backend/Spiir.Api
+
+  web:
+    project: ./frontend
+    language: js
+    host: staticwebapp
+    dist: dist
+
+hooks:
+  postprovision:
+    posix:
+      shell: sh
+      run: ./scripts/postprovision.sh
+    windows:
+      shell: pwsh
+      run: ./scripts/postprovision.ps1

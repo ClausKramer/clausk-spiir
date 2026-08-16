@@ -1,9 +1,8 @@
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using Spiir.Api.Data;
+using Spiir.Api.Data.Repositories;
 using Spiir.Api.Options;
 
 namespace Spiir.Api.Features.Categorization;
@@ -11,7 +10,7 @@ namespace Spiir.Api.Features.Categorization;
 public class ClaudeCategorizationFallback(
     IHttpClientFactory httpClientFactory,
     IOptions<AnthropicOptions> options,
-    AppDbContext db,
+    CategoryRepository categoryRepository,
     ILogger<ClaudeCategorizationFallback> logger)
 {
     public async Task<Guid?> CategorizeAsync(string description, Guid userId, CancellationToken ct = default)
@@ -22,10 +21,7 @@ public class ClaudeCategorizationFallback(
             return null;
         }
 
-        var categories = await db.Categories
-            .Where(c => c.UserId == userId)
-            .Select(c => new { c.Id, c.Name, c.Emoji })
-            .ToListAsync(ct);
+        var categories = await categoryRepository.GetAllForUserAsync(userId, ct);
 
         if (categories.Count == 0) return null;
 

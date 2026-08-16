@@ -2,58 +2,52 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Spiir.Api.Data;
+using Spiir.Api.Data.Repositories;
 using Spiir.Api.Domain.Entities;
 using Spiir.Api.Options;
 
 namespace Spiir.Api.Features.Auth;
 
 public class PasswordlessAuthenticator(
-    AppDbContext db,
+    UserRepository users,
+    MagicLinkTokenRepository magicLinkTokens,
+    RefreshTokenRepository refreshTokens,
     IEmailSender emailSender,
     DefaultDataSeeder seeder,
     IOptions<JwtOptions> jwtOptions) : IPasswordlessAuthenticator
 {
-    private const string RefreshCookieName = "refresh_token";
-
     public async Task RequestMagicLinkAsync(string email, string baseUrl, CancellationToken ct = default)
     {
         email = email.Trim().ToLowerInvariant();
 
-        var user = await db.Users.IgnoreQueryFilters().FirstOrDefaultAsync(u => u.Email == email, ct);
+        var user = await users.GetByEmailAsync(email, ct);
         bool isNew = user is null;
 
         if (isNew)
         {
             user = new User { Id = Guid.NewGuid(), Email = email, CreatedAt = DateTime.UtcNow };
-            db.Users.Add(user);
-            await db.SaveChangesAsync(ct);
+            await users.InsertAsync(user, ct);
         }
 
+        var now = DateTime.UtcNow;
+
         // Expire any existing unused tokens for this user
-        var old = await db.MagicLinkTokens
-            .IgnoreQueryFilters()
-            .Where(t => t.UserId == user!.Id && t.ConsumedAt == null && t.ExpiresAt > DateTime.UtcNow)
-            .ToListAsync(ct);
-        foreach (var t in old)
-            t.ExpiresAt = DateTime.UtcNow; // immediately expire
-        await db.SaveChangesAsync(ct);
+        await magicLinkTokens.ExpireActiveTokensAsync(user!.Id, now, ct);
 
         var rawToken = GenerateToken();
         var hash = HashToken(rawToken);
 
-        db.MagicLinkTokens.Add(new MagicLinkToken
+        await magicLinkTokens.InsertAsync(new MagicLinkToken
         {
             Id = Guid.NewGuid(),
-            UserId = user!.Id,
+            UserId = user.Id,
             TokenHash = hash,
-            CreatedAt = DateTime.UtcNow,
-            ExpiresAt = DateTime.UtcNow.AddMinutes(15),
-        });
-        await db.SaveChangesAsync(ct);
+            CreatedAt = now,
+            ExpiresAt = now.AddMinutes(15),
+        }, ct);
 
         if (isNew)
             await seeder.SeedForUserAsync(user, ct);
@@ -67,16 +61,12 @@ public class PasswordlessAuthenticator(
         var hash = HashToken(rawToken);
         var now = DateTime.UtcNow;
 
-        var token = await db.MagicLinkTokens
-            .IgnoreQueryFilters()
-            .Include(t => t.User)
-            .FirstOrDefaultAsync(t => t.TokenHash == hash && t.ConsumedAt == null && t.ExpiresAt > now, ct)
+        var found = await magicLinkTokens.GetValidWithUserByHashAsync(hash, now, ct)
             ?? throw new InvalidOperationException("Token is invalid or expired.");
 
-        token.ConsumedAt = now;
-        await db.SaveChangesAsync(ct);
+        await magicLinkTokens.MarkConsumedAsync(found.Token.Id, now, ct);
 
-        return await IssueTokensAsync(token.User, ct);
+        return await IssueTokensAsync(found.User, ct);
     }
 
     public async Task<AuthResult> RefreshAsync(string rawRefreshToken, CancellationToken ct = default)
@@ -84,31 +74,19 @@ public class PasswordlessAuthenticator(
         var hash = HashToken(rawRefreshToken);
         var now = DateTime.UtcNow;
 
-        var token = await db.RefreshTokens
-            .IgnoreQueryFilters()
-            .Include(t => t.User)
-            .FirstOrDefaultAsync(t => t.TokenHash == hash && t.RevokedAt == null && t.ExpiresAt > now, ct)
+        var found = await refreshTokens.GetValidWithUserByHashAsync(hash, now, ct)
             ?? throw new InvalidOperationException("Refresh token is invalid or expired.");
 
         // Rotate: revoke old, issue new
-        token.RevokedAt = now;
-        await db.SaveChangesAsync(ct);
+        await refreshTokens.RevokeAsync(found.Token.Id, now, ct);
 
-        return await IssueTokensAsync(token.User, ct);
+        return await IssueTokensAsync(found.User, ct);
     }
 
     public async Task RevokeRefreshTokenAsync(string rawRefreshToken, CancellationToken ct = default)
     {
         var hash = HashToken(rawRefreshToken);
-        var token = await db.RefreshTokens
-            .IgnoreQueryFilters()
-            .FirstOrDefaultAsync(t => t.TokenHash == hash && t.RevokedAt == null, ct);
-
-        if (token is not null)
-        {
-            token.RevokedAt = DateTime.UtcNow;
-            await db.SaveChangesAsync(ct);
-        }
+        await refreshTokens.RevokeByHashAsync(hash, DateTime.UtcNow, ct);
     }
 
     private async Task<AuthResult> IssueTokensAsync(User user, CancellationToken ct)
@@ -116,15 +94,14 @@ public class PasswordlessAuthenticator(
         var accessToken = GenerateAccessToken(user);
 
         var rawRefresh = GenerateToken();
-        db.RefreshTokens.Add(new RefreshToken
+        await refreshTokens.InsertAsync(new RefreshToken
         {
             Id = Guid.NewGuid(),
             UserId = user.Id,
             TokenHash = HashToken(rawRefresh),
             CreatedAt = DateTime.UtcNow,
             ExpiresAt = DateTime.UtcNow.AddDays(jwtOptions.Value.RefreshTokenDays),
-        });
-        await db.SaveChangesAsync(ct);
+        }, ct);
 
         return new AuthResult(accessToken, rawRefresh, new UserDto(user.Id, user.Email));
     }

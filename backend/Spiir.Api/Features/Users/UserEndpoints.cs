@@ -1,6 +1,4 @@
-using Microsoft.AspNetCore.Authorization;
-using Microsoft.EntityFrameworkCore;
-using Spiir.Api.Data;
+using Spiir.Api.Data.Repositories;
 using Spiir.Api.Services;
 
 namespace Spiir.Api.Features.Users;
@@ -18,11 +16,11 @@ public static class UserEndpoints
 
     private static async Task<IResult> GetMe(
         ICurrentUser currentUser,
-        AppDbContext db,
+        UserRepository users,
         CancellationToken ct)
     {
         var userId = currentUser.GetRequiredUserId();
-        var user = await db.Users.FindAsync([userId], ct);
+        var user = await users.GetByIdAsync(userId, ct);
         return user is null
             ? TypedResults.NotFound()
             : TypedResults.Ok(new { user.Id, user.Email, user.CreatedAt });

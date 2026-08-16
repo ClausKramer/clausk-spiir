@@ -1,9 +1,10 @@
+using Spiir.Api.Data.Repositories;
 using Spiir.Api.Domain.Entities;
 
 namespace Spiir.Api.Data;
 
 // Seeds default Danish merchant categories and rules for a newly registered user.
-public class DefaultDataSeeder(AppDbContext db)
+public class DefaultDataSeeder(CategoryRepository categories, CategorizationRuleRepository categorizationRules)
 {
     private static readonly (string Name, string Emoji, (string Pattern, bool IsRegex, int Priority)[] Rules)[] Defaults =
     [
@@ -80,11 +81,11 @@ public class DefaultDataSeeder(AppDbContext db)
     public async Task SeedForUserAsync(User user, CancellationToken ct = default)
     {
         var now = DateTime.UtcNow;
-        var categories = new List<Category>();
+        var newCategories = new List<Category>();
 
         foreach (var (name, emoji, _) in Defaults)
         {
-            categories.Add(new Category
+            newCategories.Add(new Category
             {
                 Id = Guid.NewGuid(),
                 UserId = user.Id,
@@ -94,13 +95,13 @@ public class DefaultDataSeeder(AppDbContext db)
             });
         }
 
-        db.Categories.AddRange(categories);
+        await categories.InsertManyAsync(newCategories, ct);
 
         var rules = new List<CategorizationRule>();
         for (var i = 0; i < Defaults.Length; i++)
         {
             var (_, _, rulesDefs) = Defaults[i];
-            var category = categories[i];
+            var category = newCategories[i];
             foreach (var (pattern, isRegex, priority) in rulesDefs)
             {
                 rules.Add(new CategorizationRule
@@ -116,7 +117,6 @@ public class DefaultDataSeeder(AppDbContext db)
             }
         }
 
-        db.CategorizationRules.AddRange(rules);
-        await db.SaveChangesAsync(ct);
+        await categorizationRules.InsertManyAsync(rules, ct);
     }
 }

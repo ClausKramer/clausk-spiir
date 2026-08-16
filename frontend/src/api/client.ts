@@ -1,7 +1,14 @@
 import axios from 'axios'
 
+// Dev: Vite proxies '/api' to the local backend (see vite.config.ts).
+// Prod: the frontend is a separately-hosted Static Web App, so it calls the Container App's
+// public URL directly (see infra/modules/container-app-api.bicep for the CORS policy that
+// allows this origin). VITE_API_BASE_URL is set by scripts/postprovision.sh into the azd
+// environment after the first `azd provision`, so subsequent builds pick it up automatically.
+const baseURL = import.meta.env.VITE_API_BASE_URL || '/api'
+
 export const client = axios.create({
-  baseURL: '/api',
+  baseURL,
   withCredentials: true,
   headers: { 'Content-Type': 'application/json' },
 })

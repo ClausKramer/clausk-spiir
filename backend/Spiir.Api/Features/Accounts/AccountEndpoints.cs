@@ -1,6 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using Spiir.Api.Data;
+using Spiir.Api.Data.Repositories;
 using Spiir.Api.Domain.Entities;
 using Spiir.Api.Infrastructure.GoCardless;
 using Spiir.Api.Services;
@@ -41,28 +40,28 @@ public static class AccountEndpoints
     }
 
     private static async Task<IResult> ListAccounts(
-        AppDbContext db,
+        BankAccountRepository bankAccounts,
+        ICurrentUser currentUser,
         CancellationToken ct)
     {
-        var accounts = await db.BankAccounts
-            .Select(a => new
-            {
-                a.Id,
-                a.GoCardlessAccountId,
-                a.Name,
-                a.Iban,
-                a.Currency,
-                a.LastSyncedAt,
-                a.CreatedAt,
-            })
-            .ToListAsync(ct);
-        return TypedResults.Ok(accounts);
+        var userId = currentUser.GetRequiredUserId();
+        var accounts = await bankAccounts.GetAllForUserAsync(userId, ct);
+        return TypedResults.Ok(accounts.Select(a => new
+        {
+            a.Id,
+            a.GoCardlessAccountId,
+            a.Name,
+            a.Iban,
+            a.Currency,
+            a.LastSyncedAt,
+            a.CreatedAt,
+        }));
     }
 
     private static async Task<IResult> ConnectBank(
         [FromBody] ConnectBankRequest req,
         IGoCardlessClient gc,
-        AppDbContext db,
+        RequisitionRepository requisitions,
         ICurrentUser currentUser,
         CancellationToken ct)
     {
@@ -84,7 +83,7 @@ public static class AccountEndpoints
         }
 
         var userId = currentUser.GetRequiredUserId();
-        db.Requisitions.Add(new Requisition
+        await requisitions.InsertAsync(new Requisition
         {
             Id = Guid.NewGuid(),
             UserId = userId,
@@ -94,8 +93,7 @@ public static class AccountEndpoints
             Status = RequisitionStatus.Pending,
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow,
-        });
-        await db.SaveChangesAsync(ct);
+        }, ct);
 
         return TypedResults.Ok(new { link = gcReq.Link, reference });
     }
@@ -103,7 +101,8 @@ public static class AccountEndpoints
     private static async Task<IResult> FinalizeConnection(
         [FromBody] FinalizeRequest req,
         IGoCardlessClient gc,
-        AppDbContext db,
+        RequisitionRepository requisitions,
+        BankAccountRepository bankAccounts,
         ICurrentUser currentUser,
         CancellationToken ct)
     {
@@ -111,8 +110,7 @@ public static class AccountEndpoints
             return TypedResults.BadRequest(new { error = "ref is required." });
 
         var userId = currentUser.GetRequiredUserId();
-        var requisition = await db.Requisitions
-            .FirstOrDefaultAsync(r => r.Reference == req.Ref && r.Status == RequisitionStatus.Pending, ct);
+        var requisition = await requisitions.GetPendingByReferenceAsync(userId, req.Ref, ct);
 
         if (requisition is null)
             return TypedResults.NotFound(new { error = "Requisition not found or already processed." });
@@ -124,9 +122,7 @@ public static class AccountEndpoints
         }
         catch (Exception ex)
         {
-            requisition.Status = RequisitionStatus.Failed;
-            requisition.UpdatedAt = DateTime.UtcNow;
-            await db.SaveChangesAsync(ct);
+            await requisitions.UpdateStatusAsync(requisition.Id, RequisitionStatus.Failed, DateTime.UtcNow, ct);
             return TypedResults.Problem($"GoCardless error: {ex.Message}", statusCode: 502);
         }
 
@@ -135,10 +131,7 @@ public static class AccountEndpoints
 
         foreach (var gcAccount in gcAccounts)
         {
-            var existing = await db.BankAccounts
-                .IgnoreQueryFilters()
-                .AnyAsync(a => a.UserId == userId && a.GoCardlessAccountId == gcAccount.Id, ct);
-
+            var existing = await bankAccounts.ExistsByGoCardlessIdAsync(userId, gcAccount.Id, ct);
             if (existing) continue;
 
             var account = new BankAccount
@@ -151,27 +144,24 @@ public static class AccountEndpoints
                 Currency = gcAccount.Currency,
                 CreatedAt = now,
             };
-            db.BankAccounts.Add(account);
+            await bankAccounts.InsertAsync(account, ct);
             created.Add(new { account.Id, account.Name, account.Iban, account.Currency });
         }
 
-        requisition.Status = RequisitionStatus.Linked;
-        requisition.UpdatedAt = now;
-        await db.SaveChangesAsync(ct);
+        await requisitions.UpdateStatusAsync(requisition.Id, RequisitionStatus.Linked, now, ct);
 
         return TypedResults.Ok(new { accounts = created, count = created.Count });
     }
 
     private static async Task<IResult> DeleteAccount(
         Guid id,
-        AppDbContext db,
+        BankAccountRepository bankAccounts,
+        ICurrentUser currentUser,
         CancellationToken ct)
     {
-        var account = await db.BankAccounts.FindAsync([id], ct);
-        if (account is null) return TypedResults.NotFound();
-        db.BankAccounts.Remove(account);
-        await db.SaveChangesAsync(ct);
-        return TypedResults.NoContent();
+        var userId = currentUser.GetRequiredUserId();
+        var deleted = await bankAccounts.DeleteAsync(userId, id, ct);
+        return deleted ? TypedResults.NoContent() : TypedResults.NotFound();
     }
 }
 

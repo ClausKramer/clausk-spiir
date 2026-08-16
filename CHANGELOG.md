@@ -1,0 +1,111 @@
+# Changelog
+
+All notable changes to this project are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+## [Unreleased]
+
+### Added
+- Azure deployment infrastructure (`infra/*.bicep`, `azure.yaml`) for `azd up`: Container Apps
+  (API), Static Web Apps (frontend), Azure SQL Database (serverless, Entra-only auth), Key Vault,
+  Container Registry, Log Analytics + Application Insights. Resource group `rg-<env>` in
+  `swedencentral` (Static Web Apps deploys to `westeurope`, the nearest supported region).
+- `backend/Spiir.Api/Dockerfile` — multi-stage .NET 10 build for the API container.
+- `scripts/postprovision.{sh,ps1}` and `scripts/grant-sql-access.{sh,ps1}` — post-provision hooks
+  that allow-list the deployer's IP on the SQL server, grant the Container App's managed identity
+  `db_datareader`/`db_datawriter`/`db_ddladmin` on the database, and persist the deployed API URL
+  into the azd environment for the frontend build.
+- `backend/Spiir.Api/Schema/0001_InitialCreate.sql` — versioned SQL Server schema, applied at
+  startup by `Data/DatabaseMigrator.cs`, replacing the EF Core migration history.
+- `frontend/public/staticwebapp.config.json` — `navigationFallback` rewrite to `index.html` so
+  React Router's client-side routes (`/login`, `/dashboard`, etc.) don't 404 on direct load.
+
+### Changed
+- **Backend data access layer replaced: EF Core + SQLite → Dapper + Azure SQL.** `AppDbContext`
+  is gone; each entity now has a small repository (`Data/Repositories/*`) built on
+  `IDbConnectionFactory` / `Microsoft.Data.SqlClient`. Connections authenticate via Microsoft Entra
+  managed identity in Azure (`Authentication=Active Directory Managed Identity` — no SQL passwords
+  anywhere).
+- **Multi-tenant isolation is now explicit per query.** EF Core's global `HasQueryFilter` on
+  `UserId` has no Dapper equivalent — every repository method that reads or writes tenant-scoped
+  data now takes `Guid userId` and bakes `WHERE UserId = @userId` into the SQL, centralized per
+  entity to keep the isolation logic in one place. `AccountEndpoints.ListAccounts` and
+  `DeleteAccount` previously relied entirely on the ambient EF filter (no `ICurrentUser` parameter
+  at all) — both now take `ICurrentUser` explicitly and pass `userId` through to the repository.
+- Container/database FK cascade paths were re-checked for SQL Server (which, unlike SQLite,
+  rejects multiple cascade paths to the same table): `Transactions.UserId` and
+  `CategorizationRules.UserId` are now `NO ACTION` — deletion still cascades via
+  `BankAccounts`/`Categories`, just not by two paths at once. See the comment in
+  `Schema/0001_InitialCreate.sql`.
+- Frontend (`frontend/src/api/client.ts`) now resolves its API base URL from
+  `VITE_API_BASE_URL` at build time in production (set automatically by
+  `scripts/postprovision.sh`/`.ps1`), falling back to the existing `/api` dev-proxy path locally.
+- CORS origin is now driven by the deployed Static Web App's URL in Azure (wired through the
+  Container App's environment variables), rather than being hardcoded to `localhost:5173`.
+
+- **Schema migration runner replaced: DbUp → Dapper-based `DatabaseMigrator`.** DbUp's own internal
+  `SqlConnection` handling reliably crashed the container process with a native SIGSEGV
+  (exit code 139) when run against Azure SQL with Entra managed-identity auth on Azure Container
+  Apps — reproducible regardless of sync/async calling context, and not fixed by any of the usual
+  container/.NET runtime workarounds (see Fixed, below). Replaced with a minimal migrator that
+  runs the same embedded `Schema/*.sql` scripts through the same `IDbConnectionFactory` + Dapper
+  path every repository already uses successfully, tracked via a hand-rolled `SchemaVersions`
+  table. `dbup-sqlserver` package reference removed.
+
+### Fixed
+
+Found and fixed during the first real `azd up` against this infrastructure — kept here since none
+of these were visible from `azd provision --preview` or local testing, and most cost real debugging
+time:
+
+- **azd 1.31.1 crashes (`nil pointer dereference` in `ImportManager.ServiceStable`) if a
+  Docker-based service has no `language` field in `azure.yaml`.** Valid per azd's own docs, but
+  not in this version. Fixed by adding `language: dotnet` to the `api` service.
+- **`azd auth login` silently authenticated against the wrong Entra tenant** (the account's
+  default/home tenant, where it's a disabled guest) instead of the tenant hosting the target
+  subscription, failing with `AADSTS500571`. Fixed with `azd auth login --tenant-id <correct-tenant>`
+  and by pinning `AZURE_TENANT_ID` in the azd environment.
+- **`azd deploy`'s PATCH for Container Apps doesn't preserve the existing `secrets` array** —
+  Azure Container Apps' `properties.configuration` isn't deep-merged on PATCH, so any partial
+  update (image swap, `az containerapp registry set`, even `az containerapp update --image`) that
+  doesn't explicitly resubmit `secrets` clears them, and the app then fails to start
+  (`ContainerAppSecretRefNotFound`) even though the secrets are still referenced by the container's
+  env vars. Worked around by submitting a single full-spec `az containerapp update --yaml`
+  covering image, registry, and secrets together.
+- **`main.bicep` originally emitted a `SERVICE_WEB_NAME` output** (matching the convention the
+  mandated `grant-sql-access` script expects), but in this app's topology "web" is the Static Web
+  App frontend (no DB access, no identity) while "api" (the Container App) is what actually needs
+  the SQL grant — and the script prefers `SERVICE_WEB_NAME` over `SERVICE_API_NAME` when both are
+  set. That silently pointed the grant at the wrong (nonexistent) principal. Fixed by not emitting
+  `SERVICE_WEB_NAME` at all (see the comment in `main.bicep`) and exposing the SWA name as
+  `STATIC_WEB_APP_NAME` instead.
+- **IP self-detection in `postprovision.ps1` used `Invoke-RestMethod -Uri https://ifconfig.me`**,
+  which returns an HTML page (not plain text) to non-browser clients in some cases — the whole page
+  then got passed as `--start-ip-address`, blowing past the Windows command-line length limit.
+  Switched both `postprovision.sh`/`.ps1` to `https://api.ipify.org`, which always returns a bare
+  IP, plus an explicit regex validation before use.
+- **`az extension add --name rdbms-connect` failed on this machine** (`Cannot import
+  'setuptools.build_meta'` inside Azure CLI's bundled Python) — an environment issue with this
+  machine's Azure CLI Python install, unrelated to this repo. Worked around for this deployment by
+  granting SQL data-plane access directly via `Microsoft.Data.SqlClient` (`Authentication=Active
+  Directory Default`, using the already-authenticated `az` CLI credential) instead of `az sql db
+  query`. `scripts/grant-sql-access.{sh,ps1}` are unchanged (still the mandated az-CLI-based
+  approach) since the failure is local-machine-specific, not a bug in the scripts.
+- **Key Vault secrets with an empty-string value make the whole Container App revision fail to
+  start.** `GOCARDLESS_SECRET_ID`/`_KEY`/`ANTHROPIC_API_KEY` were left as `''` (deliberately, as
+  unconfigured stubs), and Azure Container Apps refuses to sync a Key-Vault-sourced secret whose
+  value resolves to an empty string (`"no secret value was returned"`) — blocking *all* declared
+  secrets, not just the empty one, so the container never started. Fixed by defaulting these three
+  parameters to the placeholder `'not-configured'` instead of `''` in `main.bicep` and
+  `main.parameters.json`. Safe to leave as-is: the app already wraps both integrations in broad
+  try/catch that treats any failure (including a 401 from a placeholder key) as "not configured."
+- **No registry/identity link existed on the Container App at all** (`properties.configuration.
+  registries` was `null`) after the first failed `azd deploy` — the two-phase Bicep pattern's
+  "azd deploy configures this automatically" assumption didn't hold once `azd deploy` itself
+  started failing partway through. Fixed as part of the full-spec `az containerapp update --yaml`
+  above, which now explicitly sets `registries: [{ server: ..., identity: system }]`.
+
+### Removed
+- EF Core (`Microsoft.EntityFrameworkCore.Sqlite`/`.Design`), `AppDbContext`,
+  `AppDbContextFactory`, and the `Migrations/` folder.

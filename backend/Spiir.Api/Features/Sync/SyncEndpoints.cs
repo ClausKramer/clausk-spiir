@@ -1,5 +1,4 @@
-using Microsoft.EntityFrameworkCore;
-using Spiir.Api.Data;
+using Spiir.Api.Data.Repositories;
 using Spiir.Api.Domain.Entities;
 using Spiir.Api.Features.Categorization;
 using Spiir.Api.Infrastructure.GoCardless;
@@ -20,7 +19,8 @@ public static class SyncEndpoints
     }
 
     private static async Task<IResult> SyncAll(
-        AppDbContext db,
+        BankAccountRepository bankAccounts,
+        TransactionRepository transactions,
         IGoCardlessClient gc,
         ICategorizationEngine categorizer,
         ICurrentUser currentUser,
@@ -28,7 +28,7 @@ public static class SyncEndpoints
         CancellationToken ct)
     {
         var userId = currentUser.GetRequiredUserId();
-        var accounts = await db.BankAccounts.ToListAsync(ct);
+        var accounts = await bankAccounts.GetAllForUserAsync(userId, ct);
         if (accounts.Count == 0)
             return TypedResults.Ok(new { message = "No bank accounts to sync.", synced = 0, skipped = 0, newTransactions = 0 });
 
@@ -57,10 +57,7 @@ public static class SyncEndpoints
                 logger.LogInformation("Fetched {Count} transactions for account {Id}", gcTransactions.Count, account.Id);
 
                 // Load existing IDs to avoid duplicates
-                var existingIds = await db.Transactions
-                    .Where(t => t.BankAccountId == account.Id)
-                    .Select(t => t.GoCardlessTransactionId)
-                    .ToHashSetAsync(ct);
+                var existingIds = await transactions.GetExistingGoCardlessIdsAsync(userId, account.Id, ct);
 
                 var newTx = gcTransactions
                     .Where(t => !existingIds.Contains(t.TransactionId))
@@ -69,7 +66,7 @@ public static class SyncEndpoints
                 foreach (var t in newTx)
                 {
                     var categoryId = await categorizer.CategorizeAsync(t.Description, userId, ct);
-                    db.Transactions.Add(new Transaction
+                    await transactions.InsertAsync(new Transaction
                     {
                         Id = Guid.NewGuid(),
                         UserId = userId,
@@ -82,11 +79,10 @@ public static class SyncEndpoints
                         CategoryId = categoryId,
                         IsCategoryManual = false,
                         CreatedAt = now,
-                    });
+                    }, ct);
                 }
 
-                account.LastSyncedAt = now;
-                await db.SaveChangesAsync(ct);
+                await bankAccounts.UpdateLastSyncedAtAsync(userId, account.Id, now, ct);
 
                 totalNew += newTx.Count;
                 synced++;

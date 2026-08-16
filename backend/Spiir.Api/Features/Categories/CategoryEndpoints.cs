@@ -1,5 +1,4 @@
-using Microsoft.EntityFrameworkCore;
-using Spiir.Api.Data;
+using Spiir.Api.Data.Repositories;
 using Spiir.Api.Services;
 
 namespace Spiir.Api.Features.Categories;
@@ -16,15 +15,13 @@ public static class CategoryEndpoints
     }
 
     private static async Task<IResult> GetCategories(
-        AppDbContext db,
+        CategoryRepository categories,
         ICurrentUser currentUser,
         CancellationToken ct = default)
     {
-        var categories = await db.Categories
-            .OrderBy(c => c.Name)
-            .Select(c => new { c.Id, c.Name, c.Emoji })
-            .ToListAsync(ct);
+        var userId = currentUser.GetRequiredUserId();
+        var result = await categories.GetAllForUserAsync(userId, ct);
 
-        return TypedResults.Ok(categories);
+        return TypedResults.Ok(result.Select(c => new { c.Id, c.Name, c.Emoji }));
     }
 }

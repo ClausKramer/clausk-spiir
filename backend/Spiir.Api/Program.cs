@@ -1,8 +1,9 @@
 using System.Text;
+using Dapper;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Spiir.Api.Data;
+using Spiir.Api.Data.Repositories;
 using Spiir.Api.Features.Accounts;
 using Spiir.Api.Features.Auth;
 using Spiir.Api.Features.Categories;
@@ -14,6 +15,8 @@ using Spiir.Api.Infrastructure.GoCardless;
 using Spiir.Api.Options;
 using Spiir.Api.Services;
 
+SqlMapper.AddTypeHandler(new DateOnlyTypeHandler());
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Options
@@ -21,10 +24,18 @@ builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection("Jwt"));
 builder.Services.Configure<GoCardlessOptions>(builder.Configuration.GetSection("GoCardless"));
 builder.Services.Configure<AnthropicOptions>(builder.Configuration.GetSection("Anthropic"));
 
-// Database
-builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlite(
-        builder.Configuration.GetConnectionString("DefaultConnection") ?? "Data Source=spiir.db"));
+// Database — Dapper over Microsoft.Data.SqlClient. Connection string uses Entra ID
+// authentication in Azure (Authentication=Active Directory Managed Identity); locally it points
+// at a SQL Server / Azure SQL instance you have Entra access to (see appsettings.Development.json).
+builder.Services.AddSingleton<IDbConnectionFactory, SqlConnectionFactory>();
+builder.Services.AddScoped<UserRepository>();
+builder.Services.AddScoped<BankAccountRepository>();
+builder.Services.AddScoped<TransactionRepository>();
+builder.Services.AddScoped<CategoryRepository>();
+builder.Services.AddScoped<CategorizationRuleRepository>();
+builder.Services.AddScoped<MagicLinkTokenRepository>();
+builder.Services.AddScoped<RefreshTokenRepository>();
+builder.Services.AddScoped<RequisitionRepository>();
 
 // Scoped services
 builder.Services.AddHttpContextAccessor();
@@ -93,12 +104,11 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-// Auto-migrate in development
+// Auto-migrate on every startup (idempotent — see Data/DatabaseMigrator.cs and Schema/*.sql).
+await DatabaseMigrator.MigrateAsync(app.Services.GetRequiredService<IDbConnectionFactory>());
+
 if (app.Environment.IsDevelopment())
 {
-    using var scope = app.Services.CreateScope();
-    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    await db.Database.MigrateAsync();
     app.MapOpenApi();
 }
 

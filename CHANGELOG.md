@@ -22,6 +22,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   React Router's client-side routes (`/login`, `/dashboard`, etc.) don't 404 on direct load.
 
 ### Changed
+- **Bank data provider swapped: GoCardless → Enable Banking.** GoCardless's Bank Account Data API (the
+  open-banking transaction-fetching product this app was originally built around) stopped accepting new
+  signups in July 2025 and its developer docs shut down 24 August 2026 — not viable for a new integration.
+  Replaced `Infrastructure/GoCardless/*` with `Infrastructure/EnableBanking/*`. Enable Banking is, like
+  GoCardless was, itself the regulated AISP/TPP — no eIDAS certificate or TPP license needed on this app's
+  side, only an application ID + RSA private key from Enable Banking's control panel, used to self-sign a
+  short-lived RS256 JWT per request (`EnableBankingTokenService`) instead of GoCardless's client-credentials
+  token-exchange call. Enable Banking's free "Restricted Production" tier — access limited to accounts the
+  operator pre-authorizes in its control panel — covers this app's self-hosted, single-operator model at no
+  cost.
+  - The connect flow lost a round trip: Enable Banking's `POST /auth` returns a redirect URL directly (no
+    separate pending-requisition object to create then poll, unlike GoCardless's `POST /requisitions`); the
+    callback's `code` query param is exchanged for a session via `POST /sessions`, which already returns the
+    account list (iban/name/currency) inline — no extra per-account details call needed.
+  - A bank is now identified by `(name, country)`, not a single opaque institution id — `Requisition.
+    InstitutionId` became `AspspName` plus a new `AspspCountry` column, and `GoCardlessRequisitionId` was
+    dropped (Enable Banking never issues one prior to the session).
+  - `BankAccount.GoCardlessAccountId` → `ExternalAccountId`, `Transaction.GoCardlessTransactionId` →
+    `ExternalTransactionId`, applied via `Schema/0002_RenameGoCardlessToEnableBanking.sql`.
+  - `GoCardlessOptions` (`SecretId`/`SecretKey`) → `EnableBankingOptions` (`ApplicationId`/`PrivateKey`).
+    `PrivateKey` accepts either raw PEM (local dev, via `dotnet user-secrets`, where embedded newlines are
+    fine) or base64-encoded PEM (Azure Key Vault → Container App env var, where newlines are fragile to
+    round-trip through `.env`-style config) — see `EnableBankingTokenService.NormalizePem`.
+  - Key Vault secrets `gocardless-secret-id`/`gocardless-secret-key` → `enablebanking-application-id`/
+    `enablebanking-private-key`; Bicep params and `main.parameters.json` env vars renamed to match
+    (`GOCARDLESS_SECRET_ID`/`_KEY` → `ENABLE_BANKING_APPLICATION_ID`/`ENABLE_BANKING_PRIVATE_KEY`).
+  - Frontend: `Institution.id` → `{ name, country }`, `connectBank(institutionId)` →
+    `connectBank(aspspName, aspspCountry)`, `finalizeConnection(ref)` → `finalizeConnection(ref, code)`
+    (Enable Banking's redirect callback carries both `code` and `state`, where `state` is the reference we
+    generated when starting the authorization — GoCardless only ever sent back its own `ref`).
 - **Backend data access layer replaced: EF Core + SQLite → Dapper + Azure SQL.** `AppDbContext`
   is gone; each entity now has a small repository (`Data/Repositories/*`) built on
   `IDbConnectionFactory` / `Microsoft.Data.SqlClient`. Connections authenticate via Microsoft Entra

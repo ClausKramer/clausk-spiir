@@ -11,9 +11,9 @@ public class RequisitionRepository(IDbConnectionFactory connectionFactory)
         await conn.ExecuteAsync(
             """
             INSERT INTO Requisitions
-                (Id, UserId, GoCardlessRequisitionId, Reference, InstitutionId, Status, CreatedAt, UpdatedAt)
+                (Id, UserId, Reference, AspspName, AspspCountry, Status, CreatedAt, UpdatedAt)
             VALUES
-                (@Id, @UserId, @GoCardlessRequisitionId, @Reference, @InstitutionId, @Status, @CreatedAt, @UpdatedAt)
+                (@Id, @UserId, @Reference, @AspspName, @AspspCountry, @Status, @CreatedAt, @UpdatedAt)
             """,
             requisition);
     }
@@ -23,7 +23,7 @@ public class RequisitionRepository(IDbConnectionFactory connectionFactory)
         using var conn = await connectionFactory.CreateOpenConnectionAsync(ct);
         return await conn.QuerySingleOrDefaultAsync<Requisition>(
             """
-            SELECT Id, UserId, GoCardlessRequisitionId, Reference, InstitutionId, Status, CreatedAt, UpdatedAt
+            SELECT Id, UserId, Reference, AspspName, AspspCountry, Status, CreatedAt, UpdatedAt
             FROM Requisitions
             WHERE UserId = @userId AND Reference = @reference AND Status = @pending
             """,

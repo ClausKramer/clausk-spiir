@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Spiir.Api.Data.Repositories;
 using Spiir.Api.Domain.Entities;
-using Spiir.Api.Infrastructure.GoCardless;
+using Spiir.Api.Infrastructure.EnableBanking;
 using Spiir.Api.Services;
 
 namespace Spiir.Api.Features.Accounts;
@@ -24,18 +24,18 @@ public static class AccountEndpoints
     }
 
     private static async Task<IResult> GetInstitutions(
-        IGoCardlessClient gc,
+        IEnableBankingClient eb,
         string country = "DK",
         CancellationToken ct = default)
     {
         try
         {
-            var list = await gc.GetInstitutionsAsync(country, ct);
-            return TypedResults.Ok(list.Select(i => new { i.Id, i.Name, i.Bic, i.Logo }));
+            var list = await eb.GetAspspsAsync(country, ct);
+            return TypedResults.Ok(list.Select(a => new { a.Name, a.Country, a.Bic, a.Logo }));
         }
         catch (Exception ex)
         {
-            return TypedResults.Problem($"GoCardless error: {ex.Message}", statusCode: 502);
+            return TypedResults.Problem($"Enable Banking error: {ex.Message}", statusCode: 502);
         }
     }
 
@@ -49,7 +49,7 @@ public static class AccountEndpoints
         return TypedResults.Ok(accounts.Select(a => new
         {
             a.Id,
-            a.GoCardlessAccountId,
+            a.ExternalAccountId,
             a.Name,
             a.Iban,
             a.Currency,
@@ -60,26 +60,26 @@ public static class AccountEndpoints
 
     private static async Task<IResult> ConnectBank(
         [FromBody] ConnectBankRequest req,
-        IGoCardlessClient gc,
+        IEnableBankingClient eb,
         RequisitionRepository requisitions,
         ICurrentUser currentUser,
         CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(req.InstitutionId))
+        if (string.IsNullOrWhiteSpace(req.AspspName) || string.IsNullOrWhiteSpace(req.AspspCountry))
             return TypedResults.ValidationProblem(new Dictionary<string, string[]>
             {
-                ["institutionId"] = ["InstitutionId is required."]
+                ["aspspName"] = ["AspspName and aspspCountry are required."]
             });
 
         var reference = Guid.NewGuid().ToString("N");
-        RequisitionDto gcReq;
+        string url;
         try
         {
-            gcReq = await gc.CreateRequisitionAsync(req.InstitutionId, reference, ct);
+            url = await eb.StartAuthorizationAsync(req.AspspName, req.AspspCountry, reference, ct);
         }
         catch (Exception ex)
         {
-            return TypedResults.Problem($"GoCardless error: {ex.Message}", statusCode: 502);
+            return TypedResults.Problem($"Enable Banking error: {ex.Message}", statusCode: 502);
         }
 
         var userId = currentUser.GetRequiredUserId();
@@ -87,27 +87,27 @@ public static class AccountEndpoints
         {
             Id = Guid.NewGuid(),
             UserId = userId,
-            GoCardlessRequisitionId = gcReq.Id,
             Reference = reference,
-            InstitutionId = req.InstitutionId,
+            AspspName = req.AspspName,
+            AspspCountry = req.AspspCountry,
             Status = RequisitionStatus.Pending,
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow,
         }, ct);
 
-        return TypedResults.Ok(new { link = gcReq.Link, reference });
+        return TypedResults.Ok(new { url, reference });
     }
 
     private static async Task<IResult> FinalizeConnection(
         [FromBody] FinalizeRequest req,
-        IGoCardlessClient gc,
+        IEnableBankingClient eb,
         RequisitionRepository requisitions,
         BankAccountRepository bankAccounts,
         ICurrentUser currentUser,
         CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(req.Ref))
-            return TypedResults.BadRequest(new { error = "ref is required." });
+        if (string.IsNullOrWhiteSpace(req.Ref) || string.IsNullOrWhiteSpace(req.Code))
+            return TypedResults.BadRequest(new { error = "ref and code are required." });
 
         var userId = currentUser.GetRequiredUserId();
         var requisition = await requisitions.GetPendingByReferenceAsync(userId, req.Ref, ct);
@@ -115,33 +115,33 @@ public static class AccountEndpoints
         if (requisition is null)
             return TypedResults.NotFound(new { error = "Requisition not found or already processed." });
 
-        IReadOnlyList<GoCardlessAccount> gcAccounts;
+        EnableBankingSession session;
         try
         {
-            gcAccounts = await gc.GetAccountsAsync(requisition.GoCardlessRequisitionId, ct);
+            session = await eb.CreateSessionAsync(req.Code, ct);
         }
         catch (Exception ex)
         {
             await requisitions.UpdateStatusAsync(requisition.Id, RequisitionStatus.Failed, DateTime.UtcNow, ct);
-            return TypedResults.Problem($"GoCardless error: {ex.Message}", statusCode: 502);
+            return TypedResults.Problem($"Enable Banking error: {ex.Message}", statusCode: 502);
         }
 
         var now = DateTime.UtcNow;
         var created = new List<object>();
 
-        foreach (var gcAccount in gcAccounts)
+        foreach (var ebAccount in session.Accounts)
         {
-            var existing = await bankAccounts.ExistsByGoCardlessIdAsync(userId, gcAccount.Id, ct);
+            var existing = await bankAccounts.ExistsByExternalIdAsync(userId, ebAccount.Uid, ct);
             if (existing) continue;
 
             var account = new BankAccount
             {
                 Id = Guid.NewGuid(),
                 UserId = userId,
-                GoCardlessAccountId = gcAccount.Id,
-                Iban = gcAccount.Iban,
-                Name = gcAccount.Name ?? gcAccount.Iban ?? gcAccount.Id,
-                Currency = gcAccount.Currency,
+                ExternalAccountId = ebAccount.Uid,
+                Iban = ebAccount.Iban,
+                Name = ebAccount.Name ?? ebAccount.Iban ?? ebAccount.Uid,
+                Currency = ebAccount.Currency,
                 CreatedAt = now,
             };
             await bankAccounts.InsertAsync(account, ct);
@@ -165,5 +165,5 @@ public static class AccountEndpoints
     }
 }
 
-public record ConnectBankRequest(string InstitutionId);
-public record FinalizeRequest(string Ref);
+public record ConnectBankRequest(string AspspName, string AspspCountry);
+public record FinalizeRequest(string Ref, string Code);

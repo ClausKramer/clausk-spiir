@@ -11,7 +11,7 @@ using Spiir.Api.Features.Categorization;
 using Spiir.Api.Features.Sync;
 using Spiir.Api.Features.Transactions;
 using Spiir.Api.Features.Users;
-using Spiir.Api.Infrastructure.GoCardless;
+using Spiir.Api.Infrastructure.EnableBanking;
 using Spiir.Api.Options;
 using Spiir.Api.Services;
 
@@ -21,7 +21,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Options
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection("Jwt"));
-builder.Services.Configure<GoCardlessOptions>(builder.Configuration.GetSection("GoCardless"));
+builder.Services.Configure<EnableBankingOptions>(builder.Configuration.GetSection("EnableBanking"));
 builder.Services.Configure<AnthropicOptions>(builder.Configuration.GetSection("Anthropic"));
 
 // Database — Dapper over Microsoft.Data.SqlClient. Connection string uses Entra ID
@@ -59,15 +59,16 @@ builder.Services.AddHttpClient("Anthropic", (sp, http) =>
         http.DefaultRequestHeaders.Add("x-api-key", opts.ApiKey);
 });
 
-// GoCardless — singleton token service + scoped client
-builder.Services.AddHttpClient("GoCardless", (sp, http) =>
+// Enable Banking — singleton JWT signer (self-issued from the app's private key, no network call
+// or token-refresh endpoint involved, unlike GoCardless's client-credentials flow) + scoped client
+builder.Services.AddHttpClient("EnableBanking", (sp, http) =>
 {
-    var opts = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<GoCardlessOptions>>().Value;
+    var opts = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<EnableBankingOptions>>().Value;
     http.BaseAddress = new Uri(opts.BaseUrl);
     http.DefaultRequestHeaders.Accept.Add(new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/json"));
 });
-builder.Services.AddSingleton<IGoCardlessTokenService, GoCardlessTokenService>();
-builder.Services.AddScoped<IGoCardlessClient, GoCardlessClient>();
+builder.Services.AddSingleton<IEnableBankingTokenService, EnableBankingTokenService>();
+builder.Services.AddScoped<IEnableBankingClient, EnableBankingClient>();
 
 // JWT authentication
 var jwtSection = builder.Configuration.GetSection("Jwt");

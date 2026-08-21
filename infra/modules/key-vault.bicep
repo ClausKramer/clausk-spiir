@@ -8,9 +8,9 @@ param deployerPrincipalId string
 @secure()
 param jwtSigningKey string
 @secure()
-param goCardlessSecretId string
+param enableBankingApplicationId string
 @secure()
-param goCardlessSecretKey string
+param enableBankingPrivateKey string
 @secure()
 param anthropicApiKey string
 param sqlConnectionString string
@@ -40,19 +40,19 @@ resource jwtKeySecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   }
 }
 
-resource goCardlessSecretIdSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+resource enableBankingApplicationIdSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   parent: keyVault
-  name: 'gocardless-secret-id'
+  name: 'enablebanking-application-id'
   properties: {
-    value: goCardlessSecretId
+    value: enableBankingApplicationId
   }
 }
 
-resource goCardlessSecretKeySecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+resource enableBankingPrivateKeySecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   parent: keyVault
-  name: 'gocardless-secret-key'
+  name: 'enablebanking-private-key'
   properties: {
-    value: goCardlessSecretKey
+    value: enableBankingPrivateKey
   }
 }
 
@@ -73,7 +73,7 @@ resource sqlConnectionStringSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01
 }
 
 // Lets the deploying user manage secrets via `az keyvault secret set` after provisioning
-// (e.g. to rotate GoCardless/Anthropic credentials without a full redeploy).
+// (e.g. to rotate Enable Banking/Anthropic credentials without a full redeploy).
 resource deployerSecretsOfficerRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(keyVault.id, deployerPrincipalId, 'Key Vault Secrets Officer')
   scope: keyVault

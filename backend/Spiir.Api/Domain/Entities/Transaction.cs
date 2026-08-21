@@ -7,7 +7,7 @@ public class Transaction
     public User User { get; set; } = null!;
     public Guid BankAccountId { get; set; }
     public BankAccount BankAccount { get; set; } = null!;
-    public string GoCardlessTransactionId { get; set; } = "";
+    public string ExternalTransactionId { get; set; } = "";
     public DateOnly BookingDate { get; set; }
     public decimal Amount { get; set; }
     public string Currency { get; set; } = "DKK";

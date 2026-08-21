@@ -72,11 +72,11 @@ public class TransactionRepository(IDbConnectionFactory connectionFactory)
         return rowsAffected > 0;
     }
 
-    public async Task<HashSet<string>> GetExistingGoCardlessIdsAsync(Guid userId, Guid bankAccountId, CancellationToken ct = default)
+    public async Task<HashSet<string>> GetExistingExternalIdsAsync(Guid userId, Guid bankAccountId, CancellationToken ct = default)
     {
         using var conn = await connectionFactory.CreateOpenConnectionAsync(ct);
         var ids = await conn.QueryAsync<string>(
-            "SELECT GoCardlessTransactionId FROM Transactions WHERE UserId = @userId AND BankAccountId = @bankAccountId",
+            "SELECT ExternalTransactionId FROM Transactions WHERE UserId = @userId AND BankAccountId = @bankAccountId",
             new { userId, bankAccountId });
         return ids.ToHashSet();
     }
@@ -87,10 +87,10 @@ public class TransactionRepository(IDbConnectionFactory connectionFactory)
         await conn.ExecuteAsync(
             """
             INSERT INTO Transactions
-                (Id, UserId, BankAccountId, GoCardlessTransactionId, BookingDate, Amount, Currency,
+                (Id, UserId, BankAccountId, ExternalTransactionId, BookingDate, Amount, Currency,
                  Description, CategoryId, IsCategoryManual, CreatedAt)
             VALUES
-                (@Id, @UserId, @BankAccountId, @GoCardlessTransactionId, @BookingDate, @Amount, @Currency,
+                (@Id, @UserId, @BankAccountId, @ExternalTransactionId, @BookingDate, @Amount, @Currency,
                  @Description, @CategoryId, @IsCategoryManual, @CreatedAt)
             """,
             transaction);

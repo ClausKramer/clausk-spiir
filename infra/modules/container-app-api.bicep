@@ -39,8 +39,8 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
       }
       secrets: [
         { name: 'jwt-key', keyVaultUrl: '${keyVaultUri}secrets/jwt-key', identity: 'System' }
-        { name: 'gocardless-secret-id', keyVaultUrl: '${keyVaultUri}secrets/gocardless-secret-id', identity: 'System' }
-        { name: 'gocardless-secret-key', keyVaultUrl: '${keyVaultUri}secrets/gocardless-secret-key', identity: 'System' }
+        { name: 'enablebanking-application-id', keyVaultUrl: '${keyVaultUri}secrets/enablebanking-application-id', identity: 'System' }
+        { name: 'enablebanking-private-key', keyVaultUrl: '${keyVaultUri}secrets/enablebanking-private-key', identity: 'System' }
         { name: 'anthropic-api-key', keyVaultUrl: '${keyVaultUri}secrets/anthropic-api-key', identity: 'System' }
         { name: 'sql-connection-string', keyVaultUrl: '${keyVaultUri}secrets/sql-connection-string', identity: 'System' }
       ]
@@ -60,8 +60,8 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'ASPNETCORE_ENVIRONMENT', value: 'Production' }
             { name: 'ASPNETCORE_URLS', value: 'http://+:8080' }
             { name: 'Jwt__Key', secretRef: 'jwt-key' }
-            { name: 'GoCardless__SecretId', secretRef: 'gocardless-secret-id' }
-            { name: 'GoCardless__SecretKey', secretRef: 'gocardless-secret-key' }
+            { name: 'EnableBanking__ApplicationId', secretRef: 'enablebanking-application-id' }
+            { name: 'EnableBanking__PrivateKey', secretRef: 'enablebanking-private-key' }
             { name: 'Anthropic__ApiKey', secretRef: 'anthropic-api-key' }
             { name: 'ConnectionStrings__DefaultConnection', secretRef: 'sql-connection-string' }
             { name: 'CorsOrigin', value: corsOrigin }

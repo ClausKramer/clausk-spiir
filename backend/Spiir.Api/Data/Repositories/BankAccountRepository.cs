@@ -10,7 +10,7 @@ public class BankAccountRepository(IDbConnectionFactory connectionFactory)
         using var conn = await connectionFactory.CreateOpenConnectionAsync(ct);
         var rows = await conn.QueryAsync<BankAccount>(
             """
-            SELECT Id, UserId, GoCardlessAccountId, Iban, Name, Currency, LastSyncedAt, CreatedAt
+            SELECT Id, UserId, ExternalAccountId, Iban, Name, Currency, LastSyncedAt, CreatedAt
             FROM BankAccounts
             WHERE UserId = @userId
             """,
@@ -18,16 +18,16 @@ public class BankAccountRepository(IDbConnectionFactory connectionFactory)
         return rows.AsList();
     }
 
-    public async Task<bool> ExistsByGoCardlessIdAsync(Guid userId, string goCardlessAccountId, CancellationToken ct = default)
+    public async Task<bool> ExistsByExternalIdAsync(Guid userId, string externalAccountId, CancellationToken ct = default)
     {
         using var conn = await connectionFactory.CreateOpenConnectionAsync(ct);
         return await conn.ExecuteScalarAsync<bool>(
             """
             SELECT CASE WHEN EXISTS (
-                SELECT 1 FROM BankAccounts WHERE UserId = @userId AND GoCardlessAccountId = @goCardlessAccountId
+                SELECT 1 FROM BankAccounts WHERE UserId = @userId AND ExternalAccountId = @externalAccountId
             ) THEN 1 ELSE 0 END
             """,
-            new { userId, goCardlessAccountId });
+            new { userId, externalAccountId });
     }
 
     public async Task InsertAsync(BankAccount account, CancellationToken ct = default)
@@ -35,8 +35,8 @@ public class BankAccountRepository(IDbConnectionFactory connectionFactory)
         using var conn = await connectionFactory.CreateOpenConnectionAsync(ct);
         await conn.ExecuteAsync(
             """
-            INSERT INTO BankAccounts (Id, UserId, GoCardlessAccountId, Iban, Name, Currency, LastSyncedAt, CreatedAt)
-            VALUES (@Id, @UserId, @GoCardlessAccountId, @Iban, @Name, @Currency, @LastSyncedAt, @CreatedAt)
+            INSERT INTO BankAccounts (Id, UserId, ExternalAccountId, Iban, Name, Currency, LastSyncedAt, CreatedAt)
+            VALUES (@Id, @UserId, @ExternalAccountId, @Iban, @Name, @Currency, @LastSyncedAt, @CreatedAt)
             """,
             account);
     }

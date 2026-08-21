@@ -12,13 +12,16 @@ export function ConnectedPage() {
     if (attempted.current) return
     attempted.current = true
 
-    const ref = params.get('ref')
-    if (!ref) {
+    // Enable Banking redirects back with ?code=...&state=... — state is the reference we generated
+    // when starting the authorization (see ConnectBankPage / AccountEndpoints.ConnectBank).
+    const ref = params.get('state')
+    const code = params.get('code')
+    if (!ref || !code) {
       navigate('/accounts', { replace: true })
       return
     }
 
-    finalizeConnection(ref)
+    finalizeConnection(ref, code)
       .then(() => navigate('/accounts', { replace: true }))
       .catch((err) => {
         const msg = err?.response?.data?.error ?? 'Failed to link accounts. Please try again.'

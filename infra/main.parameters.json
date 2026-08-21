@@ -8,8 +8,8 @@
     "principalName": { "value": "${AZURE_PRINCIPAL_NAME}" },
     "principalType": { "value": "${AZURE_PRINCIPAL_TYPE=User}" },
     "jwtSigningKey": { "value": "${JWT_SIGNING_KEY}" },
-    "goCardlessSecretId": { "value": "${GOCARDLESS_SECRET_ID=not-configured}" },
-    "goCardlessSecretKey": { "value": "${GOCARDLESS_SECRET_KEY=not-configured}" },
+    "enableBankingApplicationId": { "value": "${ENABLE_BANKING_APPLICATION_ID=not-configured}" },
+    "enableBankingPrivateKey": { "value": "${ENABLE_BANKING_PRIVATE_KEY=not-configured}" },
     "anthropicApiKey": { "value": "${ANTHROPIC_API_KEY=not-configured}" }
   }
 }

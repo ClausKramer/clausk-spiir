@@ -1,6 +1,6 @@
 # Spiir — Personal Finance Tracker
 
-A self-hosted replacement for Spiir.dk. Pulls bank transactions via the GoCardless Bank Account Data API (PSD2), stores them locally, and categorizes them with a rule-based + Claude AI engine.
+A self-hosted replacement for Spiir.dk. Pulls bank transactions via the Enable Banking API (PSD2), stores them locally, and categorizes them with a rule-based + Claude AI engine.
 
 ## Stack
 
@@ -75,4 +75,4 @@ deployable, and `.azure/deployment-plan.md` for the full deployment plan.
 /docs         Architecture notes
 ```
 
-See [docs/architecture.md](docs/architecture.md) for a full description of the auth flow, multi-tenant isolation, GoCardless sync strategy, and what's stubbed for next session.
+See [docs/architecture.md](docs/architecture.md) for a full description of the auth flow, multi-tenant isolation, Enable Banking sync strategy, and what's stubbed for next session.

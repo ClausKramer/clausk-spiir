@@ -1,15 +1,15 @@
 import { client } from './client'
 
 export interface Institution {
-  id: string
   name: string
+  country: string
   bic?: string
   logo?: string
 }
 
 export interface BankAccount {
   id: string
-  goCardlessAccountId: string
+  externalAccountId: string
   name: string
   iban?: string
   currency: string
@@ -34,13 +34,13 @@ export async function getBankAccounts(): Promise<BankAccount[]> {
   return data
 }
 
-export async function connectBank(institutionId: string): Promise<{ link: string; reference: string }> {
-  const { data } = await client.post('/accounts/connect', { institutionId })
+export async function connectBank(aspspName: string, aspspCountry: string): Promise<{ url: string; reference: string }> {
+  const { data } = await client.post('/accounts/connect', { aspspName, aspspCountry })
   return data
 }
 
-export async function finalizeConnection(ref: string): Promise<{ accounts: BankAccount[]; count: number }> {
-  const { data } = await client.post('/accounts/finalize', { ref })
+export async function finalizeConnection(ref: string, code: string): Promise<{ accounts: BankAccount[]; count: number }> {
+  const { data } = await client.post('/accounts/finalize', { ref, code })
   return data
 }
 

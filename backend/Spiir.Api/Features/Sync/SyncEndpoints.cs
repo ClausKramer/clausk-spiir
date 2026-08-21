@@ -1,14 +1,15 @@
 using Spiir.Api.Data.Repositories;
 using Spiir.Api.Domain.Entities;
 using Spiir.Api.Features.Categorization;
-using Spiir.Api.Infrastructure.GoCardless;
+using Spiir.Api.Infrastructure.EnableBanking;
 using Spiir.Api.Services;
 
 namespace Spiir.Api.Features.Sync;
 
 public static class SyncEndpoints
 {
-    // GoCardless allows ~4 calls/day per account. We enforce a minimum gap between syncs.
+    // PSD2 RTS on strong customer authentication caps AISP polling at ~4 calls/day per account
+    // without customer interaction. We enforce a minimum gap between syncs to stay under that.
     private static readonly TimeSpan MinSyncGap = TimeSpan.FromHours(5);
 
     public static IEndpointRouteBuilder MapSyncEndpoints(this IEndpointRouteBuilder app)
@@ -21,7 +22,7 @@ public static class SyncEndpoints
     private static async Task<IResult> SyncAll(
         BankAccountRepository bankAccounts,
         TransactionRepository transactions,
-        IGoCardlessClient gc,
+        IEnableBankingClient eb,
         ICategorizationEngine categorizer,
         ICurrentUser currentUser,
         ILoggerFactory loggerFactory,
@@ -53,13 +54,13 @@ public static class SyncEndpoints
                     ? DateOnly.FromDateTime(account.LastSyncedAt.Value.AddDays(-1))
                     : DateOnly.FromDateTime(now.AddDays(-90));
 
-                var gcTransactions = await gc.GetTransactionsAsync(account.GoCardlessAccountId, dateFrom, ct);
-                logger.LogInformation("Fetched {Count} transactions for account {Id}", gcTransactions.Count, account.Id);
+                var ebTransactions = await eb.GetTransactionsAsync(account.ExternalAccountId, dateFrom, ct);
+                logger.LogInformation("Fetched {Count} transactions for account {Id}", ebTransactions.Count, account.Id);
 
                 // Load existing IDs to avoid duplicates
-                var existingIds = await transactions.GetExistingGoCardlessIdsAsync(userId, account.Id, ct);
+                var existingIds = await transactions.GetExistingExternalIdsAsync(userId, account.Id, ct);
 
-                var newTx = gcTransactions
+                var newTx = ebTransactions
                     .Where(t => !existingIds.Contains(t.TransactionId))
                     .ToList();
 
@@ -71,7 +72,7 @@ public static class SyncEndpoints
                         Id = Guid.NewGuid(),
                         UserId = userId,
                         BankAccountId = account.Id,
-                        GoCardlessTransactionId = t.TransactionId,
+                        ExternalTransactionId = t.TransactionId,
                         BookingDate = t.BookingDate,
                         Amount = t.Amount,
                         Currency = t.Currency,

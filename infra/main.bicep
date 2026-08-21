@@ -27,12 +27,12 @@ param jwtSigningKey string
 // if ANY Key-Vault-sourced secret resolves to an empty string ("no secret value was returned"),
 // which blocks the whole container — even for these still-optional/stubbed integrations.
 @secure()
-@description('GoCardless Bank Account Data API secret ID, stored in Key Vault')
-param goCardlessSecretId string = 'not-configured'
+@description('Enable Banking application ID, stored in Key Vault')
+param enableBankingApplicationId string = 'not-configured'
 
 @secure()
-@description('GoCardless Bank Account Data API secret key, stored in Key Vault')
-param goCardlessSecretKey string = 'not-configured'
+@description('Enable Banking application private key (PEM, base64-encoded), stored in Key Vault')
+param enableBankingPrivateKey string = 'not-configured'
 
 @secure()
 @description('Anthropic API key for the categorization fallback, stored in Key Vault')
@@ -103,8 +103,8 @@ module keyVault './modules/key-vault.bicep' = {
     resourceToken: resourceToken
     deployerPrincipalId: principalId
     jwtSigningKey: jwtSigningKey
-    goCardlessSecretId: goCardlessSecretId
-    goCardlessSecretKey: goCardlessSecretKey
+    enableBankingApplicationId: enableBankingApplicationId
+    enableBankingPrivateKey: enableBankingPrivateKey
     anthropicApiKey: anthropicApiKey
     sqlConnectionString: sql.outputs.connectionString
   }

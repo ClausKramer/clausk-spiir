@@ -48,7 +48,7 @@ public async Task<IReadOnlyList<BankAccount>> GetAllForUserAsync(Guid userId, Ca
 {
     using var conn = await connectionFactory.CreateOpenConnectionAsync(ct);
     var rows = await conn.QueryAsync<BankAccount>(
-        "SELECT Id, UserId, GoCardlessAccountId, Iban, Name, Currency, LastSyncedAt, CreatedAt FROM BankAccounts WHERE UserId = @userId",
+        "SELECT Id, UserId, ExternalAccountId, Iban, Name, Currency, LastSyncedAt, CreatedAt FROM BankAccounts WHERE UserId = @userId",
         new { userId });
     return rows.AsList();
 }
@@ -69,14 +69,33 @@ When a new user registers, `DefaultDataSeeder.SeedForUserAsync` creates 15 categ
 
 Rules have `IsRegex = true` for patterns requiring anchors or alternation, and `IsRegex = false` for plain case-insensitive contains. Priority field reserved for tiebreaking in next session.
 
-## GoCardless sync strategy
+## Enable Banking sync strategy
 
-GoCardless Bank Account Data API is rate-limited to ~4 calls/day per account. Sync is therefore:
+Originally built against GoCardless's Bank Account Data API; GoCardless stopped accepting new signups for
+that product in July 2025 and is winding it down, so the integration was swapped to **Enable Banking**
+(see CHANGELOG.md). Enable Banking is itself the regulated AISP/TPP, so this app authenticates with just an
+application ID + RSA private key (self-signed RS256 JWT per request) — no eIDAS certificate or TPP license
+of its own needed. Its free "Restricted Production" tier — access limited to accounts the operator
+pre-authorizes in the Enable Banking control panel — matches this app's self-hosted, single-operator model
+at no cost.
 
-1. **On-demand only** — triggered by a future `POST /sync` endpoint, never on page load.
-2. **Dedup by `GoCardlessTransactionId`** — unique index on `(UserId, GoCardlessTransactionId)` prevents duplicates.
-3. **Cached locally** — all UI queries hit the local SQLite DB; no live GoCardless calls in the read path.
-4. **Interface stub** (`IGoCardlessClient`) is defined but not implemented. Wire it up next session.
+Connection flow:
+1. `GET /institutions?country=DK` → `IEnableBankingClient.GetAspspsAsync` → Enable Banking `GET /aspsps`. A
+   bank is identified by `(name, country)`, not a single institution id.
+2. `POST /accounts/connect` → `StartAuthorizationAsync` → Enable Banking `POST /auth`, returns a redirect
+   `url` directly (no separate pending-requisition object to poll, unlike GoCardless).
+3. User completes consent at their bank; browser is redirected to `/accounts/connected?code=...&state=...`.
+4. `POST /accounts/finalize` → `CreateSessionAsync(code)` → Enable Banking `POST /sessions`, returns
+   `session_id` + the authorized accounts (with `uid`, iban, name, currency already included).
+
+PSD2's RTS on strong customer authentication caps AISP polling at ~4 calls/day per account without customer
+interaction, so sync stays:
+
+1. **On-demand only** — triggered by `POST /sync` (`Features/Sync/SyncEndpoints.cs`), never on page load.
+2. **Dedup by `ExternalTransactionId`** — unique index on `(UserId, ExternalTransactionId)` prevents duplicates.
+3. **Cached locally** — all UI queries hit the local database; no live Enable Banking calls in the read path.
+4. **`IEnableBankingClient`** (`Infrastructure/EnableBanking/`) is implemented but untested against a real
+   bank connection — no application has been registered with Enable Banking yet.
 
 ## Azure deployment
 
@@ -126,10 +145,10 @@ Vite proxies all `/api/…` requests to `http://localhost:5218`.
 
 | Item | Status |
 |------|--------|
-| `IGoCardlessClient` implementation | Stub only — needs SecretId/SecretKey in user-secrets locally, Key Vault in Azure |
+| `IEnableBankingClient` implementation | Implemented, untested live — needs ApplicationId/PrivateKey in user-secrets locally, Key Vault in Azure |
 | Real email delivery | `DevConsoleSender` — swap for SMTP/Resend/etc. |
 | Passkeys / WebAuthn | `IPasswordlessAuthenticator` is the extension point |
-| Bank account connection UI | `/accounts/connect` flow (GoCardless requisition) |
+| Bank account connection UI | `/accounts/connect` flow (Enable Banking authorization) |
 | Charts / budgets / multi-page transactions | Next sessions |
 
 Deployed and live as of this session — `rg-spiir-prod` in `swedencentral` (Static Web App in

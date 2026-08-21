@@ -5,8 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project
 
 Spiir is a self-hosted replacement for Spiir.dk (a defunct Danish personal finance service). It pulls bank
-transactions via the GoCardless Bank Account Data API (PSD2 open banking), stores them locally, and
-categorizes them with a rule-based engine that falls back to the Claude API for unmatched transactions.
+transactions via the Enable Banking API (PSD2 open banking), stores them locally, and categorizes them with
+a rule-based engine that falls back to the Claude API for unmatched transactions.
 
 There was an earlier Python prototype (`schema.sql`, `categorize.py`, `gocardless.py`, `db.py`) whose domain
 decisions (categorization rules, dedup strategy) were ported into this C#/React rewrite — it is not part of
@@ -49,6 +49,15 @@ One-time secret setup (JWT signing key must exist before the API will start):
 
 ```bash
 dotnet user-secrets set "Jwt:Key" "$(openssl rand -base64 32)"
+```
+
+Enable Banking is optional for local dev — without it, `/institutions` and bank connection just 502.
+To wire it up: register an application at the Enable Banking control panel (free "Restricted Production"
+tier is enough for linking your own accounts), which downloads a private key `.pem` file, then:
+
+```bash
+dotnet user-secrets set "EnableBanking:ApplicationId" "<application id>"
+dotnet user-secrets set "EnableBanking:PrivateKey" "$(cat path/to/your-app-id.pem)"
 ```
 
 ### Frontend (`frontend`)
@@ -114,13 +123,25 @@ resync must skip these transactions.
 Default categories (15) and merchant rules (22+, Danish patterns — grocery chains, transport, streaming, etc.)
 are seeded per-user at registration by `DefaultDataSeeder.SeedForUserAsync` (`Data/DefaultDataSeeder.cs`).
 
-### GoCardless sync
+### Enable Banking sync
 
-`IGoCardlessClient` (`Infrastructure/GoCardless/`) is defined but not wired to a live sync trigger yet — see
-`Features/Sync/SyncEndpoints.cs`. GoCardless's Bank Account Data API is rate-limited to ~4 calls/day per
-account, so sync must stay **on-demand only, never on page load**, with all UI reads hitting the local
-database. Incoming transactions dedup on `(UserId, GoCardlessTransactionId)` (unique index in
-`Schema/0001_InitialCreate.sql`).
+`IEnableBankingClient` (`Infrastructure/EnableBanking/`) implements the PSD2 authorization → session →
+account/transaction flow; `Features/Sync/SyncEndpoints.cs` is the only caller of `GetTransactionsAsync`.
+PSD2's RTS on strong customer authentication caps AISP polling at ~4 calls/day per account without customer
+interaction, so sync must stay **on-demand only, never on page load**, with all UI reads hitting the local
+database. Incoming transactions dedup on `(UserId, ExternalTransactionId)` (unique index, renamed from
+`GoCardlessTransactionId` by `Schema/0002_RenameGoCardlessToEnableBanking.sql`).
+
+GoCardless's Bank Account Data API (the original open-banking provider this app was built around) stopped
+accepting new signups in July 2025 and is being wound down — see CHANGELOG.md for the swap to Enable
+Banking. Enable Banking is itself the regulated AISP/TPP (like GoCardless was), so this app never needs its
+own eIDAS certificate or TPP license — only an application ID + RSA private key from Enable Banking's
+control panel. Its **free "Restricted Production"** tier covers this project's actual use case (a self-hosted
+app linking only the operator's own bank accounts, pre-authorized in the Enable Banking control panel) with
+no paid plan required. A bank is identified by `(name, country)` — there's no single institution id like
+GoCardless's — and the connect flow has one fewer round trip: `POST /auth` returns a redirect `url` directly
+(no separate "requisition" polling step), the user completes consent at their bank, and the callback's
+`code` query param is exchanged via `POST /sessions` for the account list.
 
 ### Frontend structure
 
@@ -128,15 +149,15 @@ database. Incoming transactions dedup on `(UserId, GoCardlessTransactionId)` (un
 refresh cookie. `src/hooks/useAuth.ts` + `components/ProtectedRoute.tsx` gate authenticated routes; auth state
 is driven through TanStack Query rather than local component state. Pages live flat under `src/pages/`
 (`LoginPage`, `VerifyPage`, `DashboardPage`, `AccountsPage`, `ConnectBankPage`, `ConnectedPage`) matching the
-backend's magic-link + GoCardless-connect flows.
+backend's magic-link + Enable Banking connect flows.
 
 ### Money and config conventions
 
 - Store monetary amounts as `decimal`/integer minor units, never floating point. Currency is DKK but keep a
   currency field on money-bearing entities.
-- Secrets (GoCardless creds, JWT key, Anthropic API key) are configured via `IOptions<T>` bound from
-  `Jwt`/`GoCardless`/`Anthropic` config sections (see `Options/`) — `dotnet user-secrets` locally, Key Vault
-  (via Container App secret references) in Azure. Never hardcoded either way.
+- Secrets (Enable Banking application ID/private key, JWT key, Anthropic API key) are configured via
+  `IOptions<T>` bound from `Jwt`/`EnableBanking`/`Anthropic` config sections — `dotnet user-secrets` locally,
+  Key Vault (via Container App secret references) in Azure. Never hardcoded either way.
 
 ### Azure deployment
 
@@ -149,6 +170,7 @@ persist the deployed API URL for the frontend build; see CHANGELOG.md for the fu
 
 ## What's stubbed / incomplete
 
-See `docs/architecture.md` for the up-to-date list, but as of the last session: `IGoCardlessClient` has no
-live implementation, real email delivery is a TODO (`DevConsoleSender` only), and the `CategorizationRule.Priority`
-field is reserved for tiebreaking that isn't fully wired up.
+See `docs/architecture.md` for the up-to-date list, but as of the last session: `IEnableBankingClient` is
+implemented but untested against a real bank connection (no Enable Banking application has been registered
+yet), real email delivery is a TODO (`DevConsoleSender` only), and the `CategorizationRule.Priority` field is
+reserved for tiebreaking that isn't fully wired up.

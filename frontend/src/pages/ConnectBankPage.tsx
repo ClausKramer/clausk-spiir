@@ -12,9 +12,9 @@ export function ConnectBankPage() {
   })
 
   const { mutate: doConnect, isPending: connecting } = useMutation({
-    mutationFn: connectBank,
-    onSuccess: ({ link }) => {
-      window.location.href = link
+    mutationFn: ({ name, country }: { name: string; country: string }) => connectBank(name, country),
+    onSuccess: ({ url }) => {
+      window.location.href = url
     },
   })
 
@@ -46,16 +46,16 @@ export function ConnectBankPage() {
 
         {isError && (
           <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
-            Could not load banks. Make sure GoCardless credentials are configured in user-secrets.
+            Could not load banks. Make sure Enable Banking credentials are configured in user-secrets.
           </div>
         )}
 
         <div className="rounded-xl bg-white border border-slate-100 shadow-sm divide-y divide-slate-100">
           {filtered.map((inst) => (
             <button
-              key={inst.id}
+              key={`${inst.name}:${inst.country}`}
               disabled={connecting}
-              onClick={() => doConnect(inst.id)}
+              onClick={() => doConnect({ name: inst.name, country: inst.country })}
               className="w-full flex items-center gap-4 px-5 py-4 hover:bg-slate-50 disabled:opacity-50 text-left"
             >
               {inst.logo ? (

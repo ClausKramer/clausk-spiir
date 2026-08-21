@@ -27,7 +27,12 @@ client.interceptors.response.use(
   (r) => r,
   async (error) => {
     const original = error.config
-    if (error.response?.status !== 401 || original._retry) return Promise.reject(error)
+    // The refresh call itself goes through this same interceptor. If it 401s (no valid refresh
+    // cookie), it must reject immediately — otherwise, with isRefreshing already true, it falls
+    // into the queueing branch below and deadlocks waiting on itself forever (infinite spinner).
+    if (error.response?.status !== 401 || original._retry || original.url === '/auth/refresh') {
+      return Promise.reject(error)
+    }
 
     if (isRefreshing) {
       return new Promise((resolve, reject) => {

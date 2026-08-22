@@ -10,6 +10,8 @@
     "jwtSigningKey": { "value": "${JWT_SIGNING_KEY}" },
     "enableBankingApplicationId": { "value": "${ENABLE_BANKING_APPLICATION_ID=not-configured}" },
     "enableBankingPrivateKey": { "value": "${ENABLE_BANKING_PRIVATE_KEY=not-configured}" },
-    "anthropicApiKey": { "value": "${ANTHROPIC_API_KEY=not-configured}" }
+    "anthropicApiKey": { "value": "${ANTHROPIC_API_KEY=not-configured}" },
+    "resendApiKey": { "value": "${RESEND_API_KEY=not-configured}" },
+    "resendFromAddress": { "value": "${RESEND_FROM_ADDRESS=Spiir <onboarding@resend.dev>}" }
   }
 }

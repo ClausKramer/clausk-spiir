@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **Login on the deployed app was completely broken.** `IEmailSender` was always `DevConsoleSender`
+  regardless of environment, and the one way to retrieve a magic link outside of container logs
+  (`GET /dev/last-magic-link`) is gated behind `IsDevelopment()` — so in Production, a magic link
+  was logged to Log Analytics and nowhere else, with no way for the user to actually receive it.
+  Added `ResendEmailSender` (`Features/Auth/`), swapped in by `Program.cs` whenever `Resend:ApiKey`
+  is configured; falls back to `DevConsoleSender` otherwise so local dev is unaffected.
+- **Infinite login spinner on a fresh/logged-out visit to a protected route.** The axios response
+  interceptor's 401-refresh logic (`frontend/src/api/client.ts`) applied to its own `POST
+  /auth/refresh` call — when that call itself 401s (no valid refresh cookie), it re-entered the
+  same interceptor with `isRefreshing` already `true`, which queued it on a promise that only
+  resolves when the outer refresh call (the one currently awaiting it) completes. Neither side
+  could ever finish, so `ProtectedRoute`'s `isLoading` state never cleared. Fixed by rejecting
+  immediately when the failing request is the refresh call itself.
+
 ### Added
 - Azure deployment infrastructure (`infra/*.bicep`, `azure.yaml`) for `azd up`: Container Apps
   (API), Static Web Apps (frontend), Azure SQL Database (serverless, Entra-only auth), Key Vault,

@@ -8,6 +8,7 @@ param appInsightsConnectionString string
 param sqlServerName string
 param sqlDatabaseName string
 param corsOrigin string
+param resendFromAddress string
 
 // Placeholder image for initial provisioning — azd deploy wires up the real ACR image
 // and the registry/identity link (az containerapp registry set --identity system)
@@ -42,6 +43,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
         { name: 'enablebanking-application-id', keyVaultUrl: '${keyVaultUri}secrets/enablebanking-application-id', identity: 'System' }
         { name: 'enablebanking-private-key', keyVaultUrl: '${keyVaultUri}secrets/enablebanking-private-key', identity: 'System' }
         { name: 'anthropic-api-key', keyVaultUrl: '${keyVaultUri}secrets/anthropic-api-key', identity: 'System' }
+        { name: 'resend-api-key', keyVaultUrl: '${keyVaultUri}secrets/resend-api-key', identity: 'System' }
         { name: 'sql-connection-string', keyVaultUrl: '${keyVaultUri}secrets/sql-connection-string', identity: 'System' }
       ]
       // No registries block — azd deploy configures the ACR/identity link via the Azure API
@@ -63,6 +65,8 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'EnableBanking__ApplicationId', secretRef: 'enablebanking-application-id' }
             { name: 'EnableBanking__PrivateKey', secretRef: 'enablebanking-private-key' }
             { name: 'Anthropic__ApiKey', secretRef: 'anthropic-api-key' }
+            { name: 'Resend__ApiKey', secretRef: 'resend-api-key' }
+            { name: 'Resend__FromAddress', value: resendFromAddress }
             { name: 'ConnectionStrings__DefaultConnection', secretRef: 'sql-connection-string' }
             { name: 'CorsOrigin', value: corsOrigin }
             { name: 'ApplicationInsights__ConnectionString', value: appInsightsConnectionString }

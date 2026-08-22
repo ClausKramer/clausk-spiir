@@ -14,7 +14,7 @@ Browser                  Backend                         DB
   |-- POST /auth/request-link { email } -->               |
   |                         |-- upsert User ------------->|
   |                         |-- store hash(token) ------->|
-  |                         |-- DevConsoleSender logs URL  |
+  |                         |-- IEmailSender sends URL     |
   |<-- 200 "check email" ---|                             |
   |                         |                             |
   | (user clicks link)      |                             |
@@ -146,7 +146,7 @@ Vite proxies all `/api/…` requests to `http://localhost:5218`.
 | Item | Status |
 |------|--------|
 | `IEnableBankingClient` implementation | Implemented, untested live — needs ApplicationId/PrivateKey in user-secrets locally, Key Vault in Azure |
-| Real email delivery | `DevConsoleSender` — swap for SMTP/Resend/etc. |
+| Real email delivery | `ResendEmailSender`, implemented but untested live — needs `Resend:ApiKey` in user-secrets locally, Key Vault in Azure. Falls back to `DevConsoleSender` until then. |
 | Passkeys / WebAuthn | `IPasswordlessAuthenticator` is the extension point |
 | Bank account connection UI | `/accounts/connect` flow (Enable Banking authorization) |
 | Charts / budgets / multi-page transactions | Next sessions |

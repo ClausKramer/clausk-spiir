@@ -13,6 +13,8 @@ param enableBankingApplicationId string
 param enableBankingPrivateKey string
 @secure()
 param anthropicApiKey string
+@secure()
+param resendApiKey string
 param sqlConnectionString string
 
 resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
@@ -61,6 +63,14 @@ resource anthropicApiKeySecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = 
   name: 'anthropic-api-key'
   properties: {
     value: anthropicApiKey
+  }
+}
+
+resource resendApiKeySecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+  parent: keyVault
+  name: 'resend-api-key'
+  properties: {
+    value: resendApiKey
   }
 }
 

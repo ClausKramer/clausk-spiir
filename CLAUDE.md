@@ -60,6 +60,14 @@ dotnet user-secrets set "EnableBanking:ApplicationId" "<application id>"
 dotnet user-secrets set "EnableBanking:PrivateKey" "$(cat path/to/your-app-id.pem)"
 ```
 
+Magic-link email is also optional locally — without `Resend:ApiKey` set, `Program.cs` falls back to
+`DevConsoleSender` (the normal dev flow described above). To send real email via Resend:
+
+```bash
+dotnet user-secrets set "Resend:ApiKey" "<resend api key>"
+dotnet user-secrets set "Resend:FromAddress" "Spiir <you@yourdomain.com>"  # domain must be verified in Resend
+```
+
 ### Frontend (`frontend`)
 
 ```bash
@@ -106,8 +114,9 @@ Magic link → JWT + refresh cookie, detailed end-to-end in `docs/architecture.m
 - The auth abstraction is `IPasswordlessAuthenticator` (`Features/Auth/`), implemented by
   `PasswordlessAuthenticator` — deliberately generic so passkeys/WebAuthn can be added later as an alternate
   implementation without touching endpoints.
-- `IEmailSender` → `DevConsoleSender` in dev (writes to console + a temp file read by `/dev/last-magic-link`).
-  Swap this implementation for real delivery; don't add real email logic inline in auth endpoints.
+- `IEmailSender` → `ResendEmailSender` when `Resend:ApiKey` is configured (production), falling back to
+  `DevConsoleSender` (writes to console + a temp file read by `/dev/last-magic-link`) otherwise — the
+  swap happens once, in `Program.cs`, based on config; don't add real email logic inline in auth endpoints.
 
 ### Categorization engine
 
@@ -172,5 +181,6 @@ persist the deployed API URL for the frontend build; see CHANGELOG.md for the fu
 
 See `docs/architecture.md` for the up-to-date list, but as of the last session: `IEnableBankingClient` is
 implemented but untested against a real bank connection (no Enable Banking application has been registered
-yet), real email delivery is a TODO (`DevConsoleSender` only), and the `CategorizationRule.Priority` field is
-reserved for tiebreaking that isn't fully wired up.
+yet), `ResendEmailSender` is implemented but untested live (no Resend API key configured yet — falls back
+to `DevConsoleSender` until it is), and the `CategorizationRule.Priority` field is reserved for tiebreaking
+that isn't fully wired up.

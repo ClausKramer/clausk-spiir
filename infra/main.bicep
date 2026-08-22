@@ -38,6 +38,13 @@ param enableBankingPrivateKey string = 'not-configured'
 @description('Anthropic API key for the categorization fallback, stored in Key Vault')
 param anthropicApiKey string = 'not-configured'
 
+@secure()
+@description('Resend API key for magic-link email delivery, stored in Key Vault')
+param resendApiKey string = 'not-configured'
+
+@description('Resend "from" address for magic-link emails — not secret, so not stored in Key Vault')
+param resendFromAddress string = 'Spiir <onboarding@resend.dev>'
+
 var resourceToken = take(uniqueString(subscription().id, environmentName, location), 6)
 var tags = {
   'azd-env-name': environmentName
@@ -106,6 +113,7 @@ module keyVault './modules/key-vault.bicep' = {
     enableBankingApplicationId: enableBankingApplicationId
     enableBankingPrivateKey: enableBankingPrivateKey
     anthropicApiKey: anthropicApiKey
+    resendApiKey: resendApiKey
     sqlConnectionString: sql.outputs.connectionString
   }
 }
@@ -123,6 +131,7 @@ module containerAppApi './modules/container-app-api.bicep' = {
     sqlServerName: sql.outputs.serverName
     sqlDatabaseName: sql.outputs.databaseName
     corsOrigin: staticWebApp.outputs.uri
+    resendFromAddress: resendFromAddress
   }
 }
 

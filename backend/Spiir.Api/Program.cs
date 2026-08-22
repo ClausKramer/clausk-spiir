@@ -23,6 +23,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection("Jwt"));
 builder.Services.Configure<EnableBankingOptions>(builder.Configuration.GetSection("EnableBanking"));
 builder.Services.Configure<AnthropicOptions>(builder.Configuration.GetSection("Anthropic"));
+builder.Services.Configure<ResendOptions>(builder.Configuration.GetSection("Resend"));
 
 // Database — Dapper over Microsoft.Data.SqlClient. Connection string uses Entra ID
 // authentication in Azure (Authentication=Active Directory Managed Identity); locally it points
@@ -41,8 +42,27 @@ builder.Services.AddScoped<RequisitionRepository>();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUser, CurrentUserService>();
 builder.Services.AddScoped<IPasswordlessAuthenticator, PasswordlessAuthenticator>();
-builder.Services.AddScoped<IEmailSender, DevConsoleSender>();
 builder.Services.AddScoped<DefaultDataSeeder>();
+
+// Real email delivery via Resend when configured, falling back to console-only logging (dev, or
+// before Resend:ApiKey is set) — same "not-configured" placeholder convention as the other
+// optional integrations (see infra/main.bicep).
+var resendApiKey = builder.Configuration["Resend:ApiKey"];
+if (!string.IsNullOrEmpty(resendApiKey) && resendApiKey != "not-configured")
+{
+    builder.Services.AddHttpClient("Resend", (sp, http) =>
+    {
+        var opts = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<ResendOptions>>().Value;
+        http.BaseAddress = new Uri("https://api.resend.com");
+        http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", opts.ApiKey);
+        http.DefaultRequestHeaders.Accept.Add(new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/json"));
+    });
+    builder.Services.AddScoped<IEmailSender, ResendEmailSender>();
+}
+else
+{
+    builder.Services.AddScoped<IEmailSender, DevConsoleSender>();
+}
 
 // Categorization
 builder.Services.AddScoped<ClaudeCategorizationFallback>();

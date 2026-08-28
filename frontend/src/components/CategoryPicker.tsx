@@ -8,9 +8,10 @@ interface Props {
   categoryId: string | null
   categoryName: string | null
   categoryEmoji: string | null
+  dark?: boolean
 }
 
-export function CategoryPicker({ transactionId, categoryId, categoryName, categoryEmoji }: Props) {
+export function CategoryPicker({ transactionId, categoryId, categoryName, categoryEmoji, dark = false }: Props) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   const qc = useQueryClient()
@@ -46,16 +47,26 @@ export function CategoryPicker({ transactionId, categoryId, categoryName, catego
       <button
         onClick={() => setOpen((o) => !o)}
         disabled={isPending}
-        className="rounded px-2 py-0.5 text-left text-slate-500 hover:bg-slate-100 hover:text-slate-800 disabled:opacity-50 transition-colors"
+        className={`rounded px-2 py-0.5 text-left disabled:opacity-50 transition-colors ${
+          dark
+            ? 'text-slate-300 hover:bg-white/10 hover:text-white'
+            : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
+        }`}
       >
         {isPending ? '…' : label}
       </button>
 
       {open && (
-        <div className="absolute left-0 top-full z-20 mt-1 w-52 rounded-lg border border-slate-200 bg-white shadow-lg py-1 max-h-72 overflow-y-auto">
+        <div
+          className={`absolute left-0 top-full z-20 mt-1 w-52 rounded-lg border shadow-lg py-1 max-h-72 overflow-y-auto ${
+            dark ? 'border-slate-700 bg-[#1a1f2e]' : 'border-slate-200 bg-white'
+          }`}
+        >
           <button
             onClick={() => pick(null)}
-            className="w-full px-4 py-2 text-left text-sm text-slate-400 hover:bg-slate-50"
+            className={`w-full px-4 py-2 text-left text-sm ${
+              dark ? 'text-slate-500 hover:bg-white/5' : 'text-slate-400 hover:bg-slate-50'
+            }`}
           >
             — No category
           </button>
@@ -63,8 +74,12 @@ export function CategoryPicker({ transactionId, categoryId, categoryName, catego
             <button
               key={c.id}
               onClick={() => pick(c.id)}
-              className={`w-full px-4 py-2 text-left text-sm hover:bg-slate-50 flex items-center gap-2 ${
-                c.id === categoryId ? 'font-semibold text-indigo-600' : 'text-slate-700'
+              className={`w-full px-4 py-2 text-left text-sm flex items-center gap-2 ${
+                dark ? 'hover:bg-white/5' : 'hover:bg-slate-50'
+              } ${
+                c.id === categoryId
+                  ? 'font-semibold ' + (dark ? 'text-indigo-400' : 'text-indigo-600')
+                  : (dark ? 'text-slate-300' : 'text-slate-700')
               }`}
             >
               <span className="w-5 text-center">{c.emoji}</span>

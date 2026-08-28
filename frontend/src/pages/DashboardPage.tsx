@@ -1,127 +1,327 @@
-import { useQuery } from '@tanstack/react-query'
+import { useState } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { useMe, useLogout } from '../hooks/useAuth'
-import { getTransactions } from '../api/transactions'
+import { getTransactions, getDashboard } from '../api/transactions'
 import { getBankAccounts, syncAll } from '../api/accounts'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { CategoryPicker } from '../components/CategoryPicker'
-import { SpendingChart } from '../components/SpendingChart'
+
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+const CATEGORY_COLORS = [
+  '#ef4444', '#f97316', '#eab308', '#3b82f6', '#6366f1',
+  '#8b5cf6', '#06b6d4', '#ec4899', '#22c55e', '#64748b',
+]
+
+const dkk = (n: number) =>
+  n.toLocaleString('da-DK', { style: 'currency', currency: 'DKK', maximumFractionDigits: 0 })
 
 export function DashboardPage() {
   const qc = useQueryClient()
   const { data: user } = useMe()
   const { mutate: doLogout, isPending: loggingOut } = useLogout()
-  const { data: txPage, isLoading: txLoading } = useQuery({
-    queryKey: ['transactions', 1],
-    queryFn: () => getTransactions(1, 50),
-  })
+
   const { data: accounts = [] } = useQuery({ queryKey: ['accounts'], queryFn: getBankAccounts })
   const { mutate: doSync, isPending: syncing } = useMutation({
     mutationFn: syncAll,
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['transactions'] }); qc.invalidateQueries({ queryKey: ['accounts'] }) },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['transactions'] })
+      qc.invalidateQueries({ queryKey: ['dashboard'] })
+      qc.invalidateQueries({ queryKey: ['accounts'] })
+    },
   })
 
+  // null = every account included. Once the user toggles one off, we track an explicit set.
+  const [selectedIds, setSelectedIds] = useState<string[] | null>(null)
+  const effectiveSelected = selectedIds ?? accounts.map((a) => a.id)
+  const noneSelected = accounts.length > 0 && effectiveSelected.length === 0
+  const allSelected = selectedIds === null
+  // Send [] (no filter) when every account is included — cheaper query, same result.
+  const accountIdsParam = allSelected || effectiveSelected.length === accounts.length ? [] : effectiveSelected
+
+  function toggleAccount(id: string) {
+    setSelectedIds((prev) => {
+      const current = prev ?? accounts.map((a) => a.id)
+      return current.includes(id) ? current.filter((x) => x !== id) : [...current, id]
+    })
+  }
+
+  const { data: dashboard, isLoading: dashboardLoading } = useQuery({
+    queryKey: ['dashboard', accountIdsParam],
+    queryFn: () => getDashboard(accountIdsParam, 6),
+    enabled: !noneSelected,
+  })
+
+  const { data: txPage, isLoading: txLoading } = useQuery({
+    queryKey: ['transactions', 1, accountIdsParam],
+    queryFn: () => getTransactions(1, 50, accountIdsParam),
+    enabled: !noneSelected,
+  })
+
+  const categoryRows = dashboard?.categoryBreakdown.filter((r) => r.total > 0) ?? []
+  const maxCategory = categoryRows.length > 0 ? Math.max(...categoryRows.map((r) => r.total)) : 1
+  const categoryColorByKey = new Map(categoryRows.map((r, i) => [r.categoryId ?? 'none', CATEGORY_COLORS[i % CATEGORY_COLORS.length]]))
+
+  const kpis = dashboard?.kpis
+  const netBalancePositive = (kpis?.netBalance ?? 0) >= 0
+  const surplusPositive = (kpis?.avgMonthlySurplus ?? 0) >= 0
+
   return (
-    <div className="min-h-screen bg-slate-50">
-      {/* Header */}
-      <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between">
-        <span className="text-xl font-bold text-indigo-600">Spiir</span>
-        <div className="flex items-center gap-3">
-          <span className="text-sm text-slate-600 hidden sm:block">{user?.email}</span>
-          <button
-            onClick={() => doSync()}
-            disabled={syncing || accounts.length === 0}
-            className="rounded-lg border border-slate-200 px-3 py-1 text-sm text-slate-700 hover:bg-slate-100 disabled:opacity-40"
-          >
-            {syncing ? 'Syncing…' : 'Sync'}
-          </button>
-          <Link
-            to="/accounts"
-            className="rounded-lg border border-slate-200 px-3 py-1 text-sm text-slate-700 hover:bg-slate-100"
-          >
-            Accounts
-          </Link>
-          <button
-            onClick={() => doLogout()}
-            disabled={loggingOut}
-            className="rounded-lg border border-slate-200 px-3 py-1 text-sm text-slate-700 hover:bg-slate-100 disabled:opacity-50"
-          >
-            Sign out
-          </button>
-        </div>
-      </header>
-
-      <main className="mx-auto max-w-4xl px-6 py-8">
-        {/* Summary cards */}
-        <div className="mb-8 grid grid-cols-3 gap-4">
-          {[
-            { label: 'Transactions', value: txPage?.totalCount ?? '—' },
-            { label: 'Bank accounts', value: accounts.length },
-            { label: 'Categories', value: 15 },
-          ].map(({ label, value }) => (
-            <div key={label} className="rounded-xl bg-white p-5 shadow-sm border border-slate-100">
-              <p className="text-sm text-slate-500">{label}</p>
-              <p className="mt-1 text-2xl font-bold text-slate-800">{value}</p>
-            </div>
-          ))}
-        </div>
-
-        {/* Spending chart */}
-        <div className="mb-8">
-          <SpendingChart />
-        </div>
-
-        {/* Transactions table */}
-        <div className="rounded-xl bg-white shadow-sm border border-slate-100">
-          <div className="border-b border-slate-100 px-6 py-4">
-            <h2 className="text-base font-semibold text-slate-800">Transactions</h2>
+    <div className="min-h-screen bg-[#0f1117] text-slate-200 px-4 py-6 md:px-8 md:py-8">
+      <div className="mx-auto max-w-6xl">
+        {/* Header */}
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-xl font-bold text-slate-50">🏦 Spiir</h1>
+            <p className="mt-0.5 text-xs text-slate-500">
+              {user?.email}
+              {accounts.length > 0 && <> &nbsp;·&nbsp; {accounts.length} account{accounts.length === 1 ? '' : 's'}</>}
+              {txPage && <> &nbsp;·&nbsp; {txPage.totalCount} transactions</>}
+            </p>
           </div>
-
-          {txLoading ? (
-            <div className="flex justify-center py-12">
-              <div className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-600 border-t-transparent" />
-            </div>
-          ) : txPage && txPage.items.length > 0 ? (
-            <table className="w-full text-sm">
-              <thead className="bg-slate-50 text-xs uppercase text-slate-500">
-                <tr>
-                  <th className="px-6 py-3 text-left">Date</th>
-                  <th className="px-6 py-3 text-left">Description</th>
-                  <th className="px-6 py-3 text-left">Category</th>
-                  <th className="px-6 py-3 text-right">Amount</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {txPage.items.map((tx) => (
-                  <tr key={tx.id} className="hover:bg-slate-50">
-                    <td className="px-6 py-3 text-slate-500 whitespace-nowrap">{tx.bookingDate}</td>
-                    <td className="px-6 py-3 text-slate-800">{tx.description}</td>
-                    <td className="px-6 py-3">
-                      <CategoryPicker
-                        transactionId={tx.id}
-                        categoryId={tx.categoryId}
-                        categoryName={tx.categoryName}
-                        categoryEmoji={tx.categoryEmoji}
-                      />
-                    </td>
-                    <td className={`px-6 py-3 text-right font-medium tabular-nums ${tx.amount < 0 ? 'text-red-600' : 'text-green-600'}`}>
-                      {tx.amount.toLocaleString('da-DK', { style: 'currency', currency: tx.currency })}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : (
-            <div className="flex flex-col items-center justify-center py-16 text-center">
-              <div className="text-4xl mb-3">🏦</div>
-              <p className="text-slate-600 font-medium">No transactions yet</p>
-              <p className="mt-1 text-sm text-slate-400">
-                Connect a bank account to start syncing transactions.
-              </p>
-            </div>
-          )}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => doSync()}
+              disabled={syncing || accounts.length === 0}
+              className="rounded-lg border border-slate-700 bg-[#1a1f2e] px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-[#232b3b] disabled:opacity-40 transition-colors"
+            >
+              {syncing ? 'Syncing…' : 'Sync'}
+            </button>
+            <Link
+              to="/accounts"
+              className="rounded-lg border border-slate-700 bg-[#1a1f2e] px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-[#232b3b] transition-colors"
+            >
+              Accounts
+            </Link>
+            <button
+              onClick={() => doLogout()}
+              disabled={loggingOut}
+              className="rounded-lg border border-slate-700 bg-[#1a1f2e] px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-[#232b3b] disabled:opacity-50 transition-colors"
+            >
+              Sign out
+            </button>
+          </div>
         </div>
-      </main>
+
+        {/* Account filter */}
+        {accounts.length > 0 && (
+          <div className="mb-6 flex flex-wrap items-center gap-2">
+            <span className="text-[0.7rem] uppercase tracking-wider text-slate-500 mr-1">Accounts</span>
+            <button
+              onClick={() => setSelectedIds(null)}
+              className={`rounded-full px-3 py-1 text-xs font-medium border transition-colors ${
+                allSelected
+                  ? 'bg-indigo-500/20 border-indigo-500 text-indigo-300'
+                  : 'border-slate-700 text-slate-400 hover:bg-[#1a1f2e]'
+              }`}
+            >
+              All
+            </button>
+            {accounts.map((a) => {
+              const active = effectiveSelected.includes(a.id)
+              return (
+                <button
+                  key={a.id}
+                  onClick={() => toggleAccount(a.id)}
+                  className={`rounded-full px-3 py-1 text-xs font-medium border transition-colors ${
+                    active
+                      ? 'bg-[#1a1f2e] border-slate-600 text-slate-200'
+                      : 'border-slate-800 text-slate-600 hover:text-slate-400'
+                  }`}
+                >
+                  {a.name}
+                </button>
+              )
+            })}
+          </div>
+        )}
+
+        {noneSelected ? (
+          <div className="rounded-xl border border-slate-800 bg-[#1a1f2e] py-16 text-center">
+            <p className="text-slate-400">No accounts selected.</p>
+            <button onClick={() => setSelectedIds(null)} className="mt-2 text-sm text-indigo-400 hover:underline">
+              Select all accounts
+            </button>
+          </div>
+        ) : (
+          <>
+            {/* KPI cards */}
+            <div className="mb-5 grid grid-cols-2 md:grid-cols-4 gap-3">
+              <Kpi label="Avg. monthly income" value={dkk(kpis?.avgMonthlyIncome ?? 0)} valueClass="text-emerald-400" loading={dashboardLoading} />
+              <Kpi label="Avg. monthly expenses" value={dkk(-(kpis?.avgMonthlyExpense ?? 0))} valueClass="text-red-400" loading={dashboardLoading} />
+              <Kpi
+                label="Avg. monthly surplus"
+                value={dkk(kpis?.avgMonthlySurplus ?? 0)}
+                valueClass={surplusPositive ? 'text-amber-400' : 'text-red-400'}
+                loading={dashboardLoading}
+              />
+              <Kpi
+                label="Net balance (tracked)"
+                value={dkk(kpis?.netBalance ?? 0)}
+                valueClass={netBalancePositive ? 'text-emerald-400' : 'text-red-400'}
+                sub="Sum of synced transactions"
+                loading={dashboardLoading}
+              />
+            </div>
+
+            {/* Monthly flow */}
+            <Section title="📅 Monthly cash flow">
+              {dashboardLoading ? (
+                <Spinner />
+              ) : (
+                <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+                  {dashboard?.monthlyFlow.map((m) => (
+                    <div key={`${m.year}-${m.month}`} className="rounded-lg border border-[#1e2535] bg-[#111620] px-2.5 py-3 text-center">
+                      <div className="text-[0.65rem] uppercase text-slate-600 mb-1.5">{MONTH_NAMES[m.month - 1]}</div>
+                      <div className="text-xs font-semibold text-emerald-400">+{Math.round(m.income).toLocaleString('da-DK')}</div>
+                      <div className="text-xs font-semibold text-red-400">−{Math.round(m.expense).toLocaleString('da-DK')}</div>
+                      <div className={`mt-1 text-[0.7rem] font-semibold ${m.net >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {m.net >= 0 ? '+' : ''}
+                        {Math.round(m.net).toLocaleString('da-DK')}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Section>
+
+            <div className="mb-5 grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {/* Category breakdown */}
+              <Section title="📊 Spending by category (period total)">
+                {dashboardLoading ? (
+                  <Spinner />
+                ) : categoryRows.length === 0 ? (
+                  <p className="text-center text-sm text-slate-600 py-8">No categorized spending yet.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {categoryRows.slice(0, 9).map((row) => (
+                      <div key={row.categoryId ?? 'none'} className="flex items-center gap-2.5">
+                        <div className="w-36 shrink-0 text-right text-xs text-slate-400 truncate">
+                          {row.categoryEmoji && <span className="mr-1">{row.categoryEmoji}</span>}
+                          {row.categoryName ?? 'Uncategorized'}
+                        </div>
+                        <div className="flex-1 h-[22px] rounded bg-[#1e2535] overflow-hidden">
+                          <div
+                            className="h-full rounded flex items-center px-2.5 transition-all duration-500"
+                            style={{
+                              width: `${Math.max((row.total / maxCategory) * 100, 8)}%`,
+                              background: categoryColorByKey.get(row.categoryId ?? 'none'),
+                            }}
+                          >
+                            <span className="text-[0.7rem] font-semibold text-white/90 whitespace-nowrap">{dkk(row.total)}</span>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </Section>
+
+              {/* Structural balance */}
+              <Section title="💰 Structural monthly balance">
+                {dashboardLoading ? (
+                  <Spinner />
+                ) : (
+                  <div className="rounded-lg border border-[#1e2535] bg-[#111620] px-3.5 py-3 text-sm">
+                    <FlowRow label="Avg. income" value={dkk(kpis?.avgMonthlyIncome ?? 0)} valueClass="text-emerald-400" />
+                    <FlowRow label="Avg. expenses" value={dkk(-(kpis?.avgMonthlyExpense ?? 0))} valueClass="text-red-400" />
+                    <div className="mt-1.5 border-t border-slate-700 pt-1.5">
+                      <FlowRow
+                        label="Avg. surplus"
+                        value={`${surplusPositive ? '+' : ''}${dkk(kpis?.avgMonthlySurplus ?? 0)}`}
+                        valueClass={surplusPositive ? 'text-emerald-400' : 'text-red-400'}
+                        bold
+                      />
+                    </div>
+                  </div>
+                )}
+              </Section>
+            </div>
+
+            {/* Transactions */}
+            <Section title="📋 Transactions">
+              {txLoading ? (
+                <Spinner />
+              ) : txPage && txPage.items.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-[0.68rem] uppercase tracking-wider text-slate-600 border-b border-[#232b3b]">
+                        <th className="py-2 pr-3 font-medium">Date</th>
+                        <th className="py-2 pr-3 font-medium">Description</th>
+                        <th className="py-2 pr-3 font-medium">Category</th>
+                        <th className="py-2 pl-3 font-medium text-right">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {txPage.items.map((tx) => (
+                        <tr key={tx.id} className="border-b border-[#1e2535] last:border-none hover:bg-white/[0.02]">
+                          <td className="py-2 pr-3 whitespace-nowrap text-slate-500">{tx.bookingDate}</td>
+                          <td className="py-2 pr-3 text-slate-300">{tx.description}</td>
+                          <td className="py-2 pr-3">
+                            <CategoryPicker
+                              dark
+                              transactionId={tx.id}
+                              categoryId={tx.categoryId}
+                              categoryName={tx.categoryName}
+                              categoryEmoji={tx.categoryEmoji}
+                            />
+                          </td>
+                          <td className={`py-2 pl-3 text-right font-semibold tabular-nums ${tx.amount < 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+                            {tx.amount.toLocaleString('da-DK', { style: 'currency', currency: tx.currency })}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center py-14 text-center">
+                  <div className="text-3xl mb-2">🏦</div>
+                  <p className="text-slate-400 font-medium">No transactions yet</p>
+                  <p className="mt-1 text-sm text-slate-600">Connect a bank account to start syncing transactions.</p>
+                </div>
+              )}
+            </Section>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function Kpi({ label, value, valueClass, sub, loading }: { label: string; value: string; valueClass: string; sub?: string; loading?: boolean }) {
+  return (
+    <div className="rounded-xl border border-[#232b3b] bg-[#1a1f2e] px-4 py-3.5">
+      <div className="text-[0.68rem] uppercase tracking-wider text-slate-600 mb-1.5">{label}</div>
+      <div className={`text-xl font-bold tabular-nums ${valueClass}`}>{loading ? '—' : value}</div>
+      {sub && <div className="mt-1 text-[0.68rem] text-slate-600">{sub}</div>}
+    </div>
+  )
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="mb-5 rounded-xl border border-[#232b3b] bg-[#1a1f2e] p-4 md:p-5">
+      <div className="mb-4 text-[0.7rem] font-bold uppercase tracking-wider text-slate-600">{title}</div>
+      {children}
+    </div>
+  )
+}
+
+function FlowRow({ label, value, valueClass, bold }: { label: string; value: string; valueClass: string; bold?: boolean }) {
+  return (
+    <div className={`flex justify-between py-0.5 ${bold ? 'font-bold text-[0.9rem]' : 'text-slate-400'}`}>
+      <span>{label}</span>
+      <span className={valueClass}>{value}</span>
+    </div>
+  )
+}
+
+function Spinner() {
+  return (
+    <div className="flex justify-center py-8">
+      <div className="h-6 w-6 animate-spin rounded-full border-4 border-indigo-500 border-t-transparent" />
     </div>
   )
 }

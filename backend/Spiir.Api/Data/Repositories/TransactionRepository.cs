@@ -16,48 +16,85 @@ public record TransactionListItem(
     bool IsCategoryManual);
 
 public record MonthlySummaryRow(Guid? CategoryId, string? CategoryName, string? CategoryEmoji, decimal Total);
+public record MonthlyFlowRow(int Year, int Month, decimal Income, decimal Expense);
 
 public class TransactionRepository(IDbConnectionFactory connectionFactory)
 {
+    // IReadOnlyList<Guid>? accountIds: null or empty means "all accounts" (no filter). The
+    // accountIds parameter is always passed to Dapper even when unused by the SQL text (e.g. when
+    // the filter clause is omitted) — Dapper ignores parameters the query text doesn't reference.
+    private static string AccountFilterClause(IReadOnlyList<Guid>? accountIds) =>
+        accountIds is { Count: > 0 } ? "AND t.BankAccountId IN @accountIds" : "";
+
     public async Task<(IReadOnlyList<TransactionListItem> Items, int TotalCount)> GetPageAsync(
-        Guid userId, int page, int pageSize, CancellationToken ct = default)
+        Guid userId, int page, int pageSize, IReadOnlyList<Guid>? accountIds, CancellationToken ct = default)
     {
         using var conn = await connectionFactory.CreateOpenConnectionAsync(ct);
+        var filter = AccountFilterClause(accountIds);
 
         var total = await conn.ExecuteScalarAsync<int>(
-            "SELECT COUNT(*) FROM Transactions WHERE UserId = @userId",
-            new { userId });
+            $"SELECT COUNT(*) FROM Transactions t WHERE t.UserId = @userId {filter}",
+            new { userId, accountIds });
 
         var items = await conn.QueryAsync<TransactionListItem>(
-            """
+            $"""
             SELECT t.Id, t.BankAccountId, t.BookingDate, t.Amount, t.Currency, t.Description,
                    t.CategoryId, c.Name AS CategoryName, c.Emoji AS CategoryEmoji, t.IsCategoryManual
             FROM Transactions t
             LEFT JOIN Categories c ON c.Id = t.CategoryId
-            WHERE t.UserId = @userId
+            WHERE t.UserId = @userId {filter}
             ORDER BY t.BookingDate DESC, t.CreatedAt DESC
             OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY
             """,
-            new { userId, offset = (page - 1) * pageSize, pageSize });
+            new { userId, accountIds, offset = (page - 1) * pageSize, pageSize });
 
         return (items.AsList(), total);
     }
 
-    public async Task<IReadOnlyList<MonthlySummaryRow>> GetMonthlySummaryAsync(
-        Guid userId, DateOnly from, DateOnly to, CancellationToken ct = default)
+    public async Task<IReadOnlyList<MonthlyFlowRow>> GetMonthlyFlowAsync(
+        Guid userId, IReadOnlyList<Guid>? accountIds, DateOnly from, DateOnly to, CancellationToken ct = default)
     {
         using var conn = await connectionFactory.CreateOpenConnectionAsync(ct);
+        var filter = AccountFilterClause(accountIds);
+        var rows = await conn.QueryAsync<MonthlyFlowRow>(
+            $"""
+            SELECT YEAR(t.BookingDate) AS Year, MONTH(t.BookingDate) AS Month,
+                   SUM(CASE WHEN t.Amount > 0 THEN t.Amount ELSE 0 END) AS Income,
+                   SUM(CASE WHEN t.Amount < 0 THEN -t.Amount ELSE 0 END) AS Expense
+            FROM Transactions t
+            WHERE t.UserId = @userId AND t.BookingDate >= @from AND t.BookingDate < @to {filter}
+            GROUP BY YEAR(t.BookingDate), MONTH(t.BookingDate)
+            ORDER BY Year, Month
+            """,
+            new { userId, accountIds, from, to });
+        return rows.AsList();
+    }
+
+    public async Task<IReadOnlyList<MonthlySummaryRow>> GetCategoryBreakdownAsync(
+        Guid userId, IReadOnlyList<Guid>? accountIds, DateOnly from, DateOnly to, CancellationToken ct = default)
+    {
+        using var conn = await connectionFactory.CreateOpenConnectionAsync(ct);
+        var filter = AccountFilterClause(accountIds);
         var rows = await conn.QueryAsync<MonthlySummaryRow>(
-            """
+            $"""
             SELECT t.CategoryId, c.Name AS CategoryName, c.Emoji AS CategoryEmoji, -SUM(t.Amount) AS Total
             FROM Transactions t
             LEFT JOIN Categories c ON c.Id = t.CategoryId
-            WHERE t.UserId = @userId AND t.BookingDate >= @from AND t.BookingDate < @to AND t.Amount < 0
+            WHERE t.UserId = @userId AND t.BookingDate >= @from AND t.BookingDate < @to AND t.Amount < 0 {filter}
             GROUP BY t.CategoryId, c.Name, c.Emoji
             ORDER BY Total DESC
             """,
-            new { userId, from, to });
+            new { userId, accountIds, from, to });
         return rows.AsList();
+    }
+
+    public async Task<decimal> GetNetBalanceAsync(Guid userId, IReadOnlyList<Guid>? accountIds, CancellationToken ct = default)
+    {
+        using var conn = await connectionFactory.CreateOpenConnectionAsync(ct);
+        var filter = AccountFilterClause(accountIds);
+        return await conn.ExecuteScalarAsync<decimal>(
+            $"SELECT ISNULL(SUM(t.Amount), 0) FROM Transactions t WHERE t.UserId = @userId {filter}",
+            new { userId, accountIds });
     }
 
     public async Task<bool> SetCategoryAsync(Guid userId, Guid transactionId, Guid? categoryId, CancellationToken ct = default)

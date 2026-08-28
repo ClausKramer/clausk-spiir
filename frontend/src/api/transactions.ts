@@ -20,8 +20,12 @@ export interface TransactionPage {
   pageSize: number
 }
 
-export async function getTransactions(page = 1, pageSize = 50): Promise<TransactionPage> {
-  const { data } = await client.get('/transactions', { params: { page, pageSize } })
+export async function getTransactions(page = 1, pageSize = 50, accountIds: string[] = []): Promise<TransactionPage> {
+  const params = new URLSearchParams()
+  params.set('page', String(page))
+  params.set('pageSize', String(pageSize))
+  accountIds.forEach((id) => params.append('accountIds', id))
+  const { data } = await client.get('/transactions', { params })
   return data
 }
 
@@ -44,5 +48,35 @@ export interface MonthlySummary {
 
 export async function getMonthlySummary(year?: number, month?: number): Promise<MonthlySummary> {
   const { data } = await client.get('/transactions/summary', { params: { year, month } })
+  return data
+}
+
+export interface MonthlyFlow {
+  year: number
+  month: number
+  income: number
+  expense: number
+  net: number
+}
+
+export interface DashboardData {
+  from: string
+  to: string
+  months: number
+  monthlyFlow: MonthlyFlow[]
+  categoryBreakdown: SpendingRow[]
+  kpis: {
+    avgMonthlyIncome: number
+    avgMonthlyExpense: number
+    avgMonthlySurplus: number
+    netBalance: number
+  }
+}
+
+export async function getDashboard(accountIds: string[] = [], months = 6): Promise<DashboardData> {
+  const params = new URLSearchParams()
+  params.set('months', String(months))
+  accountIds.forEach((id) => params.append('accountIds', id))
+  const { data } = await client.get('/transactions/dashboard', { params })
   return data
 }

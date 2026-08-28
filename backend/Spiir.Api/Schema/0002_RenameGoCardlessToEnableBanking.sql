@@ -6,7 +6,7 @@
 
 EXEC sp_rename 'BankAccounts.GoCardlessAccountId', 'ExternalAccountId', 'COLUMN';
 EXEC sp_rename 'Transactions.GoCardlessTransactionId', 'ExternalTransactionId', 'COLUMN';
-EXEC sp_rename 'IX_Transactions_UserId_GoCardlessTransactionId', 'IX_Transactions_UserId_ExternalTransactionId', 'INDEX';
+EXEC sp_rename 'Transactions.IX_Transactions_UserId_GoCardlessTransactionId', 'IX_Transactions_UserId_ExternalTransactionId', 'INDEX';
 
 EXEC sp_rename 'Requisitions.InstitutionId', 'AspspName', 'COLUMN';
 ALTER TABLE Requisitions DROP COLUMN GoCardlessRequisitionId;

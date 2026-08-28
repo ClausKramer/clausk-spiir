@@ -44,10 +44,27 @@ public static class DatabaseMigrator
             using var reader = new StreamReader(stream);
             var sql = await reader.ReadToEndAsync(ct);
 
-            await conn.ExecuteAsync(sql);
-            await conn.ExecuteAsync(
-                "INSERT INTO SchemaVersions (ScriptName, AppliedAt) VALUES (@resourceName, @now)",
-                new { resourceName, now = DateTime.UtcNow });
+            // Each script + its SchemaVersions bookkeeping row runs as one atomic transaction, so a
+            // mid-script failure can't leave the schema partially migrated with nothing recording
+            // that fact (which previously turned one bad statement into a permanent crash loop —
+            // every restart re-ran the same script against an already-half-migrated schema). SQL
+            // Server DDL is transactional, but a statement error doesn't abort the batch by default
+            // (later statements still run and commit) — XACT_ABORT ON makes any error immediately
+            // roll back the whole transaction instead.
+            using var transaction = conn.BeginTransaction();
+            try
+            {
+                await conn.ExecuteAsync("SET XACT_ABORT ON;\n" + sql, transaction: transaction);
+                await conn.ExecuteAsync(
+                    "INSERT INTO SchemaVersions (ScriptName, AppliedAt) VALUES (@resourceName, @now)",
+                    new { resourceName, now = DateTime.UtcNow }, transaction: transaction);
+                transaction.Commit();
+            }
+            catch
+            {
+                transaction.Rollback();
+                throw;
+            }
         }
     }
 }

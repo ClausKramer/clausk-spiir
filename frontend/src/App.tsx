@@ -6,6 +6,8 @@ import { DashboardPage } from './pages/DashboardPage'
 import { AccountsPage } from './pages/AccountsPage'
 import { ConnectBankPage } from './pages/ConnectBankPage'
 import { ConnectedPage } from './pages/ConnectedPage'
+import { PrivacyPage } from './pages/PrivacyPage'
+import { TermsPage } from './pages/TermsPage'
 import { ProtectedRoute } from './components/ProtectedRoute'
 
 const queryClient = new QueryClient({
@@ -21,6 +23,8 @@ export function App() {
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/auth/verify" element={<VerifyPage />} />
+          <Route path="/privacy" element={<PrivacyPage />} />
+          <Route path="/terms" element={<TermsPage />} />
           <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
           <Route path="/accounts" element={<ProtectedRoute><AccountsPage /></ProtectedRoute>} />
           <Route path="/accounts/connect" element={<ProtectedRoute><ConnectBankPage /></ProtectedRoute>} />

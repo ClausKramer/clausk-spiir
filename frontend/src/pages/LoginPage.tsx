@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useRequestMagicLink } from '../hooks/useAuth'
 
 export function LoginPage() {
@@ -71,6 +72,12 @@ export function LoginPage() {
             {isPending ? 'Sending…' : 'Send magic link'}
           </button>
         </form>
+
+        <p className="mt-6 text-center text-xs text-slate-400">
+          <Link to="/privacy" className="hover:underline">Privacy Policy</Link>
+          {' · '}
+          <Link to="/terms" className="hover:underline">Terms of Service</Link>
+        </p>
       </div>
     </div>
   )

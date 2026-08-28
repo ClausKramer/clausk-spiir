@@ -69,6 +69,10 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'Resend__FromAddress', value: resendFromAddress }
             { name: 'ConnectionStrings__DefaultConnection', secretRef: 'sql-connection-string' }
             { name: 'CorsOrigin', value: corsOrigin }
+            // EnableBankingOptions.RedirectUrl defaults to a localhost dev URL with no other way
+            // to override it for this environment — same class of bug as the magic-link one fixed
+            // earlier, so wired the same way: derive it from corsOrigin (the frontend's origin).
+            { name: 'EnableBanking__RedirectUrl', value: '${corsOrigin}/accounts/connected' }
             { name: 'ApplicationInsights__ConnectionString', value: appInsightsConnectionString }
             { name: 'SQL_SERVER', value: sqlServerName }
             { name: 'SQL_DATABASE', value: sqlDatabaseName }

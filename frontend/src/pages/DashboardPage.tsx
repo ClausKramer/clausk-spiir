@@ -41,7 +41,10 @@ export function DashboardPage() {
 
   function toggleAccount(id: string) {
     setSelectedIds((prev) => {
-      const current = prev ?? accounts.map((a) => a.id)
+      // Coming from "All" (prev === null), a click means "show me just this one", not "remove
+      // this one from everything" — so the starting set is empty, not every account. From any
+      // explicit selection onward, clicks toggle normally within that set.
+      const current = prev ?? []
       return current.includes(id) ? current.filter((x) => x !== id) : [...current, id]
     })
   }
@@ -61,6 +64,8 @@ export function DashboardPage() {
   const categoryRows = dashboard?.categoryBreakdown.filter((r) => r.total > 0) ?? []
   const maxCategory = categoryRows.length > 0 ? Math.max(...categoryRows.map((r) => r.total)) : 1
   const categoryColorByKey = new Map(categoryRows.map((r, i) => [r.categoryId ?? 'none', CATEGORY_COLORS[i % CATEGORY_COLORS.length]]))
+
+  const accountNameById = new Map(accounts.map((a) => [a.id, a.name]))
 
   const kpis = dashboard?.kpis
   const netBalancePositive = (kpis?.netBalance ?? 0) >= 0
@@ -249,6 +254,7 @@ export function DashboardPage() {
                       <tr className="text-left text-[0.68rem] uppercase tracking-wider text-slate-600 border-b border-[#232b3b]">
                         <th className="py-2 pr-3 font-medium">Date</th>
                         <th className="py-2 pr-3 font-medium">Description</th>
+                        <th className="py-2 pr-3 font-medium">Account</th>
                         <th className="py-2 pr-3 font-medium">Category</th>
                         <th className="py-2 pl-3 font-medium text-right">Amount</th>
                       </tr>
@@ -258,6 +264,7 @@ export function DashboardPage() {
                         <tr key={tx.id} className="border-b border-[#1e2535] last:border-none hover:bg-white/[0.02]">
                           <td className="py-2 pr-3 whitespace-nowrap text-slate-500">{tx.bookingDate}</td>
                           <td className="py-2 pr-3 text-slate-300">{tx.description}</td>
+                          <td className="py-2 pr-3 whitespace-nowrap text-slate-500">{accountNameById.get(tx.bankAccountId) ?? '—'}</td>
                           <td className="py-2 pr-3">
                             <CategoryPicker
                               dark

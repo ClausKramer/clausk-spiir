@@ -49,6 +49,16 @@ public class CategorizationRuleRepository(IDbConnectionFactory connectionFactory
             new { userId, minPriority });
     }
 
+    public async Task<int> DeleteByIdsAsync(Guid userId, IReadOnlyList<Guid> ids, CancellationToken ct = default)
+    {
+        if (ids.Count == 0) return 0;
+
+        using var conn = await connectionFactory.CreateOpenConnectionAsync(ct);
+        return await conn.ExecuteAsync(
+            "DELETE FROM CategorizationRules WHERE UserId = @userId AND Id IN @ids",
+            new { userId, ids });
+    }
+
     public async Task InsertManyAsync(IEnumerable<CategorizationRule> rules, CancellationToken ct = default)
     {
         using var conn = await connectionFactory.CreateOpenConnectionAsync(ct);

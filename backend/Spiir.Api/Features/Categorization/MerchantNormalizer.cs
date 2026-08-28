@@ -22,14 +22,20 @@ public static partial class MerchantNormalizer
         var firstBackslash = s.IndexOf('\\');
         if (firstBackslash > 0) s = s[..firstBackslash];
 
-        // Danish bank prefixes for the payment mechanism, not the merchant:
-        // "Bs" = Betalingsservice (direct debit), "Dankort-nota", "Visa/Dankort", "Køb" = purchase.
-        s = LeadingPaymentPrefix().Replace(s, "");
-
-        // Danske Bank prefixes card entries with the country of the terminal ("Danmark GO ON VIBY
-        // J", "Danmark Wash World 826"). Left in place it becomes the merchant key for every
-        // domestic card purchase, so one correction would recategorize all of them.
-        s = LeadingCountryName().Replace(s, "");
+        // Strip leading noise until nothing more matches: these prefixes stack and their order
+        // isn't guaranteed ("Danmark MobilePay ..."), so one pass each would leave some behind.
+        // Both describe how the money moved, never who was paid — left in place, whichever comes
+        // first becomes the merchant key and one correction rewrites every transaction sharing it.
+        for (var changed = true; changed;)
+        {
+            var before = s;
+            // Payment rails / card schemes: "Bs" = Betalingsservice, Dankort, MobilePay, and
+            // processor prefixes like "MOB.PAY*".
+            s = LeadingPaymentPrefix().Replace(s, "");
+            // Danske Bank prefixes card entries with the terminal's country ("Danmark GO ON VIBY J").
+            s = LeadingCountryName().Replace(s, "");
+            changed = s != before;
+        }
 
         s = MaskedCardNumber().Replace(s, " ");   // 1234******5678, xxxx1234
         s = DateLike().Replace(s, " ");           // 04.11, 04-11-2026, 2026-11-04
@@ -70,7 +76,16 @@ public static partial class MerchantNormalizer
         "apotek", "bageri", "pizzeria", "grill", "salon", "klinik", "unknown", "diverse",
     };
 
-    [GeneratedRegex(@"^\s*(bs|betalingsservice|dankort-?nota|visa/?dankort|visa|dankort|køb|kob|overførsel|ovf\.?)\s+",
+    // Payment rails and card schemes that wrap the real merchant name. MobilePay especially:
+    // "MobilePay The Padel Professor Club" and "MobilePay Water & Wellness Randers" are unrelated
+    // payees, so treating "MobilePay" as the merchant lumps every MobilePay payment together.
+    // Payment-processor prefixes ending in '*' (MOB.PAY*, NYX*) work the same way — but only
+    // known ones are stripped, since plenty of merchants legitimately contain '*' themselves
+    // (e.g. "OPENAI *CHATGPT SUBSCR", where the leading token is the merchant).
+    // Two shapes: processor prefixes that run straight into the merchant via '*' ("MOB.PAY*OK
+    // A.M.B.A."), and word prefixes that must be followed by whitespace so they can't chop the
+    // start of a real name ("Visa" must not match "Visadan...").
+    [GeneratedRegex(@"^\s*((mob\.?pay|nyx)\s*\*\s*|(mobile-?pay|bs|betalingsservice|dankort-?nota|visa/?dankort|visa|dankort|køb|kob|overførsel|ovf\.?)\s+)",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex LeadingPaymentPrefix();
 

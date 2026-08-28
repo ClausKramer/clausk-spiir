@@ -51,11 +51,8 @@ export function DashboardPage() {
       qc.invalidateQueries({ queryKey: ['transactions'] })
       qc.invalidateQueries({ queryKey: ['dashboard'] })
       qc.invalidateQueries({ queryKey: ['categories'] })
-      setStatusMessage(
-        defaults.addedCategories > 0
-          ? `${defaults.message} ${result.message}`
-          : result.message,
-      )
+      const defaultsChanged = defaults.addedCategories > 0 || defaults.addedRules > 0 || defaults.removedRules > 0
+      setStatusMessage(defaultsChanged ? `${defaults.message} ${result.message}` : result.message)
     },
     onError: () => setStatusMessage('Recategorize failed. Please try again.'),
   })

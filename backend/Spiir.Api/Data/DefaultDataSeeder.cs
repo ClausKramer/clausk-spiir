@@ -22,9 +22,12 @@ public class DefaultDataSeeder(CategoryRepository categories, CategorizationRule
             (@"udbetaling|refusion|tilbagebetaling", true, 10),
             (@"su\b|dagpenge|pension|b[øo]rnepenge|b[øo]rnetilskud", true, 10),
         ]),
+        // Deliberately no "mobilepay" rule: MobilePay is a payment rail, not a category — it
+        // carries both person-to-person transfers and ordinary purchases ("MobilePay Water &
+        // Wellness Randers"). The normalizer strips the prefix so whatever follows gets
+        // categorized on its own merits instead.
         ("Overførsel", "🔁", [
             (@"overf[øo]rsel|overf[øo]rt|ovf\.|bs overf", true, 20),
-            (@"mobilepay", false, 10),
             (@"egen konto|til budget|fra budget|opsparing til", true, 10),
         ]),
         ("Opsparing & Investering", "🐷", [
@@ -138,12 +141,14 @@ public class DefaultDataSeeder(CategoryRepository categories, CategorizationRule
         SeedMissingForUserAsync(user.Id, ct);
 
     /// <summary>
-    /// Adds any default categories and rules the user doesn't already have, matched by name and
-    /// by (pattern, category) respectively. Safe to re-run: seeding a new user and backfilling
-    /// newly-added defaults onto an existing one are the same operation, so the defaults list
-    /// stays the single source of truth. Never modifies or removes what's already there.
+    /// Converges the user's categories and seeded rules onto the current defaults: adds what's
+    /// missing (categories matched by name, rules by pattern+category) and removes seeded rules
+    /// that are no longer declared, so a default that turns out to be wrong can actually be
+    /// retracted. Categories are never removed — they may have transactions attached — and rules
+    /// learned from the user's own corrections (priority >= LearnedRulePriority) are left alone.
+    /// Safe to re-run; registration and backfilling share this one path.
     /// </summary>
-    public async Task<(int Categories, int Rules)> SeedMissingForUserAsync(Guid userId, CancellationToken ct = default)
+    public async Task<(int Categories, int Rules, int Removed)> SeedMissingForUserAsync(Guid userId, CancellationToken ct = default)
     {
         var now = DateTime.UtcNow;
 
@@ -170,16 +175,17 @@ public class DefaultDataSeeder(CategoryRepository categories, CategorizationRule
         if (newCategories.Count > 0)
             await categories.InsertManyAsync(newCategories, ct);
 
-        var existingRules = (await categorizationRules.GetAllForUserOrderedAsync(userId, ct))
-            .Select(r => (r.Pattern, r.CategoryId))
-            .ToHashSet();
+        var allRules = await categorizationRules.GetAllForUserOrderedAsync(userId, ct);
+        var existingRules = allRules.Select(r => (r.Pattern, r.CategoryId)).ToHashSet();
 
+        var declared = new HashSet<(string, Guid)>();
         var newRules = new List<CategorizationRule>();
         foreach (var (name, _, ruleDefs) in Defaults)
         {
             var categoryId = categoryIdByName[name];
             foreach (var (pattern, isRegex, priority) in ruleDefs)
             {
+                declared.Add((pattern, categoryId));
                 if (!existingRules.Add((pattern, categoryId))) continue;
 
                 newRules.Add(new CategorizationRule
@@ -198,6 +204,21 @@ public class DefaultDataSeeder(CategoryRepository categories, CategorizationRule
         if (newRules.Count > 0)
             await categorizationRules.InsertManyAsync(newRules, ct);
 
-        return (newCategories.Count, newRules.Count);
+        // Retract seeded rules that are no longer declared. Without this a default that turns out
+        // to be harmful (a payment rail matched as if it were a merchant, say) would live on
+        // forever in every account created before it was removed.
+        var stale = allRules
+            .Where(r => r.Priority < LearnedRulePriority && !declared.Contains((r.Pattern, r.CategoryId)))
+            .Select(r => r.Id)
+            .ToList();
+
+        if (stale.Count > 0)
+            await categorizationRules.DeleteByIdsAsync(userId, stale, ct);
+
+        return (newCategories.Count, newRules.Count, stale.Count);
     }
+
+    // Kept in sync with TransactionEndpoints.LearnedRulePriority — the boundary between rules this
+    // seeder owns and rules the user's corrections created, which it must never touch.
+    private const int LearnedRulePriority = 100;
 }

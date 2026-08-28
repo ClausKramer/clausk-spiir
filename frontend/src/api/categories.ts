@@ -14,6 +14,7 @@ export async function getCategories(): Promise<Category[]> {
 export interface SyncDefaultsResult {
   addedCategories: number
   addedRules: number
+  removedRules: number
   message: string
 }
 

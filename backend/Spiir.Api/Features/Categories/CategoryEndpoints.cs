@@ -44,16 +44,21 @@ public static class CategoryEndpoints
         CancellationToken ct = default)
     {
         var userId = currentUser.GetRequiredUserId();
-        var (addedCategories, addedRules) = await seeder.SeedMissingForUserAsync(userId, ct);
+        var (addedCategories, addedRules, removedRules) = await seeder.SeedMissingForUserAsync(userId, ct);
 
-        return TypedResults.Ok(new
-        {
-            addedCategories,
-            addedRules,
-            message = addedCategories == 0 && addedRules == 0
-                ? "Already up to date."
-                : $"Added {addedCategories} categor{(addedCategories == 1 ? "y" : "ies")} and {addedRules} rule(s).",
-        });
+        var parts = new List<string>();
+        if (addedCategories > 0) parts.Add($"{addedCategories} categor{(addedCategories == 1 ? "y" : "ies")}");
+        if (addedRules > 0) parts.Add($"{addedRules} rule(s)");
+
+        var message = parts.Count == 0 && removedRules == 0
+            ? "Already up to date."
+            : string.Join(" ", new[]
+            {
+                parts.Count > 0 ? $"Added {string.Join(" and ", parts)}." : null,
+                removedRules > 0 ? $"Removed {removedRules} outdated rule(s)." : null,
+            }.Where(p => p is not null));
+
+        return TypedResults.Ok(new { addedCategories, addedRules, removedRules, message });
     }
 
     private static async Task<IResult> GetCategories(

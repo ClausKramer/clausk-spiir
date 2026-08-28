@@ -178,6 +178,13 @@ function AccountRow({ account, onDelete, deleting }: { account: BankAccount; onD
             onChange={handleFileChange}
             className="hidden"
           />
+          <Link
+            to={`/accounts/${account.id}/transactions`}
+            className="text-sm text-indigo-600 hover:text-indigo-800"
+            title="View all transactions for this account"
+          >
+            Transactions
+          </Link>
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={importing}

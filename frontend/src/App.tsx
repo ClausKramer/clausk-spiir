@@ -6,6 +6,7 @@ import { DashboardPage } from './pages/DashboardPage'
 import { AccountsPage } from './pages/AccountsPage'
 import { ConnectBankPage } from './pages/ConnectBankPage'
 import { ConnectedPage } from './pages/ConnectedPage'
+import { AccountTransactionsPage } from './pages/AccountTransactionsPage'
 import { PrivacyPage } from './pages/PrivacyPage'
 import { TermsPage } from './pages/TermsPage'
 import { ProtectedRoute } from './components/ProtectedRoute'
@@ -29,6 +30,8 @@ export function App() {
           <Route path="/accounts" element={<ProtectedRoute><AccountsPage /></ProtectedRoute>} />
           <Route path="/accounts/connect" element={<ProtectedRoute><ConnectBankPage /></ProtectedRoute>} />
           <Route path="/accounts/connected" element={<ProtectedRoute><ConnectedPage /></ProtectedRoute>} />
+          {/* After the literal /accounts/* routes so "connect"/"connected" aren't read as ids. */}
+          <Route path="/accounts/:id/transactions" element={<ProtectedRoute><AccountTransactionsPage /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </BrowserRouter>

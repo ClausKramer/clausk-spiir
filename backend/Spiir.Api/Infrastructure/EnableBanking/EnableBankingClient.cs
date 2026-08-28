@@ -60,12 +60,32 @@ public class EnableBankingClient(
         string accountUid, DateOnly? dateFrom = null, CancellationToken ct = default)
     {
         var http = AuthenticatedClient();
-        var url = $"/accounts/{accountUid}/transactions";
-        if (dateFrom.HasValue)
-            url += $"?date_from={dateFrom.Value:yyyy-MM-dd}";
+        var all = new List<EnableBankingTransaction>();
 
-        var response = await http.GetFromJsonAsync<TransactionsResponse>(url, ct);
-        return response?.Transactions.Select(ToTransaction).ToList() ?? [];
+        // Enable Banking pages transactions: a response carries at most one page plus a
+        // continuation_key to fetch the next. Reading only the first page silently truncates
+        // history — follow the keys until the API stops handing one back.
+        string? continuationKey = null;
+        do
+        {
+            var query = new List<string>();
+            if (dateFrom.HasValue) query.Add($"date_from={dateFrom.Value:yyyy-MM-dd}");
+            if (continuationKey is not null) query.Add($"continuation_key={Uri.EscapeDataString(continuationKey)}");
+
+            var url = $"/accounts/{accountUid}/transactions";
+            if (query.Count > 0) url += "?" + string.Join("&", query);
+
+            var response = await http.GetFromJsonAsync<TransactionsResponse>(url, ct);
+            if (response is null) break;
+
+            all.AddRange(response.Transactions.Select(ToTransaction));
+            continuationKey = string.IsNullOrWhiteSpace(response.ContinuationKey) ? null : response.ContinuationKey;
+
+            // Defensive stop: a bank echoing the same key back would otherwise loop forever.
+            if (all.Count > 10_000) break;
+        } while (continuationKey is not null);
+
+        return all;
     }
 
     private static EnableBankingTransaction ToTransaction(TransactionDto t)

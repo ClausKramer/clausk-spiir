@@ -18,6 +18,18 @@ public class BankAccountRepository(IDbConnectionFactory connectionFactory)
         return rows.AsList();
     }
 
+    public async Task<BankAccount?> GetByIdAsync(Guid userId, Guid id, CancellationToken ct = default)
+    {
+        using var conn = await connectionFactory.CreateOpenConnectionAsync(ct);
+        return await conn.QuerySingleOrDefaultAsync<BankAccount>(
+            """
+            SELECT Id, UserId, ExternalAccountId, Iban, Name, Currency, LastSyncedAt, CreatedAt
+            FROM BankAccounts
+            WHERE UserId = @userId AND Id = @id
+            """,
+            new { userId, id });
+    }
+
     public async Task<bool> ExistsByExternalIdAsync(Guid userId, string externalAccountId, CancellationToken ct = default)
     {
         using var conn = await connectionFactory.CreateOpenConnectionAsync(ct);

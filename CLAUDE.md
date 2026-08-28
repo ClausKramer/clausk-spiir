@@ -155,6 +155,19 @@ GoCardless's — and the connect flow has one fewer round trip: `POST /auth` ret
 (no separate "requisition" polling step), the user completes consent at their bank, and the callback's
 `code` query param is exchanged via `POST /sessions` for the account list.
 
+### CSV import (history older than Enable Banking can provide)
+
+`POST /accounts/{id}/import-csv` (`AccountEndpoints.ImportCsv`, `.DisableAntiforgery()` — Bearer-token
+auth has no ambient credential for CSRF to ride on, so the default antiforgery requirement Minimal APIs
+attach to any form-binding endpoint doesn't apply and isn't otherwise configured in this app) backfills
+transactions a bank consent can't reach. `Infrastructure/CsvImport/TransactionCsvParser.cs` is pure parsing
+(no I/O, easy to test in isolation) — forgiving about delimiter (`,`/`;`), decimal separator, and date
+format, but expects a header row naming Date/Description/Amount columns (common Danish/English aliases
+recognized). Rows dedup on a synthetic `csv:<hash>` `ExternalTransactionId` (deterministic per
+date+amount+description, so re-uploading the same file is a no-op) since CSV rows have no bank-assigned id
+the way synced ones do. An optional Category column matches against the user's existing categories by name
+(sets `IsCategoryManual = true`); otherwise rows run through the same `ICategorizationEngine` sync uses.
+
 ### Frontend structure
 
 `src/api/*.ts` — one file per backend feature area, using an Axios client (`api/client.ts`) that carries the

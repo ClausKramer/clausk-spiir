@@ -1,6 +1,10 @@
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.AspNetCore.Mvc;
 using Spiir.Api.Data.Repositories;
 using Spiir.Api.Domain.Entities;
+using Spiir.Api.Features.Categorization;
+using Spiir.Api.Infrastructure.CsvImport;
 using Spiir.Api.Infrastructure.EnableBanking;
 using Spiir.Api.Services;
 
@@ -19,6 +23,12 @@ public static class AccountEndpoints
         group.MapPost("/connect", ConnectBank);
         group.MapPost("/finalize", FinalizeConnection);
         group.MapPatch("/{id:guid}", RenameAccount);
+        // Antiforgery protection (CSRF via ambient cookies) doesn't apply here — this endpoint is
+        // authenticated by a Bearer token the browser never sends automatically, so there's no
+        // ambient credential for a third-party site to ride on. DisableAntiforgery() opts out of
+        // ASP.NET Core's default requirement that any form-binding endpoint go through antiforgery
+        // middleware, which this app doesn't otherwise need and hasn't configured.
+        group.MapPost("/{id:guid}/import-csv", ImportCsv).DisableAntiforgery();
         group.MapDelete("/{id:guid}", DeleteAccount);
 
         return app;
@@ -171,6 +181,98 @@ public static class AccountEndpoints
         var userId = currentUser.GetRequiredUserId();
         var renamed = await bankAccounts.RenameAsync(userId, id, name, ct);
         return renamed ? TypedResults.NoContent() : TypedResults.NotFound();
+    }
+
+    private static async Task<IResult> ImportCsv(
+        Guid id,
+        IFormFile file,
+        BankAccountRepository bankAccounts,
+        TransactionRepository transactions,
+        CategoryRepository categories,
+        ICategorizationEngine categorizer,
+        ICurrentUser currentUser,
+        CancellationToken ct)
+    {
+        if (file is null || file.Length == 0)
+            return TypedResults.BadRequest(new { error = "No file uploaded." });
+        if (file.Length > 5 * 1024 * 1024)
+            return TypedResults.BadRequest(new { error = "File is too large (max 5 MB)." });
+
+        var userId = currentUser.GetRequiredUserId();
+        var account = await bankAccounts.GetByIdAsync(userId, id, ct);
+        if (account is null)
+            return TypedResults.NotFound(new { error = "Account not found." });
+
+        string content;
+        using (var reader = new StreamReader(file.OpenReadStream(), Encoding.UTF8, detectEncodingFromByteOrderMarks: true))
+            content = await reader.ReadToEndAsync(ct);
+
+        var parsed = TransactionCsvParser.Parse(content);
+        if (parsed.Rows.Count == 0)
+            return TypedResults.BadRequest(new { error = "No importable rows found.", details = parsed.Errors });
+
+        // Dedup against both what's already stored and other rows within this same file — Add()
+        // returning false covers both cases, since a match either way means "already accounted for".
+        var externalIds = await transactions.GetExistingExternalIdsAsync(userId, id, ct);
+        var userCategories = await categories.GetAllForUserAsync(userId, ct);
+        var categoriesByName = userCategories.ToDictionary(c => c.Name, c => c.Id, StringComparer.OrdinalIgnoreCase);
+
+        var now = DateTime.UtcNow;
+        var imported = 0;
+        var skipped = 0;
+
+        foreach (var row in parsed.Rows)
+        {
+            var externalId = CsvExternalId(row);
+            if (!externalIds.Add(externalId)) { skipped++; continue; }
+
+            Guid? categoryId;
+            bool isCategoryManual;
+            if (row.CategoryName is not null && categoriesByName.TryGetValue(row.CategoryName, out var matchedId))
+            {
+                categoryId = matchedId;
+                isCategoryManual = true;
+            }
+            else
+            {
+                categoryId = await categorizer.CategorizeAsync(row.Description, userId, ct);
+                isCategoryManual = false;
+            }
+
+            await transactions.InsertAsync(new Transaction
+            {
+                Id = Guid.NewGuid(),
+                UserId = userId,
+                BankAccountId = id,
+                ExternalTransactionId = externalId,
+                BookingDate = row.BookingDate,
+                Amount = row.Amount,
+                Currency = account.Currency,
+                Description = row.Description,
+                CategoryId = categoryId,
+                IsCategoryManual = isCategoryManual,
+                CreatedAt = now,
+            }, ct);
+            imported++;
+        }
+
+        return TypedResults.Ok(new
+        {
+            imported,
+            skipped,
+            errors = parsed.Errors,
+            message = $"Imported {imported} transaction(s), skipped {skipped} duplicate(s).",
+        });
+    }
+
+    // Deterministic per (date, amount, description) so re-uploading the same file is idempotent —
+    // CSV rows have no bank-assigned id to dedup on the way synced transactions do. Prefixed to
+    // keep this id space distinct from anything a real bank could ever hand back.
+    private static string CsvExternalId(ParsedCsvRow row)
+    {
+        var raw = $"{row.BookingDate:O}|{row.Amount}|{row.Description}";
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(raw))).ToLowerInvariant();
+        return $"csv:{hash[..32]}";
     }
 
     private static async Task<IResult> DeleteAccount(

@@ -52,6 +52,25 @@ export async function renameBankAccount(id: string, name: string): Promise<void>
   await client.patch(`/accounts/${id}`, { name })
 }
 
+export interface ImportCsvResult {
+  imported: number
+  skipped: number
+  errors: string[]
+  message: string
+}
+
+export async function importCsv(accountId: string, file: File): Promise<ImportCsvResult> {
+  const formData = new FormData()
+  formData.append('file', file)
+  // client's instance default is Content-Type: application/json — axios won't override an
+  // already-set header for FormData bodies, so it must be explicitly cleared here for the
+  // browser to fill in multipart/form-data with the correct boundary itself.
+  const { data } = await client.post(`/accounts/${accountId}/import-csv`, formData, {
+    headers: { 'Content-Type': undefined },
+  })
+  return data
+}
+
 export async function syncAll(): Promise<SyncResult> {
   const { data } = await client.post('/sync')
   return data

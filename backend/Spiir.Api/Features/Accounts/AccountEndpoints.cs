@@ -221,8 +221,9 @@ public static class AccountEndpoints
         var imported = 0;
         var skipped = 0;
 
-        foreach (var row in parsed.Rows)
+        for (var i = 0; i < parsed.Rows.Count; i++)
         {
+            var row = parsed.Rows[i];
             var externalId = CsvExternalId(row);
             if (!externalIds.Add(externalId)) { skipped++; continue; }
 
@@ -251,7 +252,10 @@ public static class AccountEndpoints
                 Description = row.Description,
                 CategoryId = categoryId,
                 IsCategoryManual = isCategoryManual,
-                CreatedAt = now,
+                // Nudged by row position so rows sharing a BookingDate (same-day transactions in
+                // one file) still get a meaningful, stable secondary sort order instead of all
+                // landing on the exact same instant and leaving ties to an arbitrary tiebreaker.
+                CreatedAt = now.AddTicks(i),
             }, ct);
             imported++;
         }

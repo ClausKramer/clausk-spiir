@@ -67,7 +67,7 @@ public class TransactionRepository(IDbConnectionFactory connectionFactory)
             FROM Transactions t
             LEFT JOIN Categories c ON c.Id = t.CategoryId
             WHERE t.UserId = @userId {filter}
-            ORDER BY t.BookingDate DESC, t.CreatedAt DESC
+            ORDER BY t.BookingDate DESC, t.CreatedAt DESC, t.Id DESC
             OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY
             """,
             new { userId, accountIds, offset = (page - 1) * pageSize, pageSize });

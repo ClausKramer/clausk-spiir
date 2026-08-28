@@ -133,6 +133,39 @@ public class TransactionRepository(IDbConnectionFactory connectionFactory)
         return rowsAffected > 0;
     }
 
+    public async Task<string?> GetDescriptionAsync(Guid userId, Guid transactionId, CancellationToken ct = default)
+    {
+        using var conn = await connectionFactory.CreateOpenConnectionAsync(ct);
+        return await conn.QuerySingleOrDefaultAsync<string?>(
+            "SELECT Description FROM Transactions WHERE UserId = @userId AND Id = @transactionId",
+            new { userId, transactionId });
+    }
+
+    // Auto-categorized rows only (IsCategoryManual = 0) — a user's own explicit choice is
+    // authoritative and must never be overwritten by a rule learned from a different transaction.
+    public async Task<IReadOnlyList<(Guid Id, string Description)>> GetAutoCategorizedDescriptionsAsync(
+        Guid userId, CancellationToken ct = default)
+    {
+        using var conn = await connectionFactory.CreateOpenConnectionAsync(ct);
+        var rows = await conn.QueryAsync<(Guid Id, string Description)>(
+            "SELECT Id, Description FROM Transactions WHERE UserId = @userId AND IsCategoryManual = 0",
+            new { userId });
+        return rows.AsList();
+    }
+
+    public async Task<int> SetCategoryForManyAsync(
+        Guid userId, IReadOnlyList<Guid> transactionIds, Guid categoryId, CancellationToken ct = default)
+    {
+        if (transactionIds.Count == 0) return 0;
+
+        using var conn = await connectionFactory.CreateOpenConnectionAsync(ct);
+        // IsCategoryManual stays 0: these were set by a learned rule, not chosen row-by-row, so a
+        // later rule change is still free to recategorize them.
+        return await conn.ExecuteAsync(
+            "UPDATE Transactions SET CategoryId = @categoryId WHERE UserId = @userId AND Id IN @transactionIds AND IsCategoryManual = 0",
+            new { userId, transactionIds, categoryId });
+    }
+
     public async Task<HashSet<string>> GetExistingExternalIdsAsync(Guid userId, Guid bankAccountId, CancellationToken ct = default)
     {
         using var conn = await connectionFactory.CreateOpenConnectionAsync(ct);

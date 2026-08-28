@@ -29,8 +29,14 @@ export async function getTransactions(page = 1, pageSize = 50, accountIds: strin
   return data
 }
 
-export async function setTransactionCategory(id: string, categoryId: string | null): Promise<void> {
-  await client.patch(`/transactions/${id}/category`, { categoryId })
+export async function setTransactionCategory(
+  id: string,
+  categoryId: string | null,
+): Promise<{ alsoUpdated: number }> {
+  const { data } = await client.patch(`/transactions/${id}/category`, { categoryId })
+  // alsoUpdated: other transactions from the same merchant the backend recategorized by learning
+  // a rule from this correction.
+  return data ?? { alsoUpdated: 0 }
 }
 
 export interface SpendingRow {

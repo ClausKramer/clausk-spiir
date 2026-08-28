@@ -64,9 +64,13 @@ public static class SyncEndpoints
                     .Where(t => !existingIds.Contains(t.TransactionId))
                     .ToList();
 
+                // Categorize the whole batch up front — one pass over the rules per distinct
+                // merchant, and at most a handful of Claude calls, instead of per transaction.
+                var categoryByDescription = await categorizer.CategorizeManyAsync(
+                    newTx.Select(t => t.Description).ToList(), userId, ct);
+
                 foreach (var t in newTx)
                 {
-                    var categoryId = await categorizer.CategorizeAsync(t.Description, userId, ct);
                     await transactions.InsertAsync(new Transaction
                     {
                         Id = Guid.NewGuid(),
@@ -77,7 +81,7 @@ public static class SyncEndpoints
                         Amount = t.Amount,
                         Currency = t.Currency,
                         Description = t.Description,
-                        CategoryId = categoryId,
+                        CategoryId = categoryByDescription.TryGetValue(t.Description, out var categoryId) ? categoryId : null,
                         IsCategoryManual = false,
                         CreatedAt = now,
                     }, ct);

@@ -1,4 +1,5 @@
 using Spiir.Api.Data.Repositories;
+using Spiir.Api.Features.Categorization;
 using Spiir.Api.Services;
 
 namespace Spiir.Api.Features.Transactions;
@@ -109,6 +110,7 @@ public static class TransactionEndpoints
         SetCategoryRequest body,
         TransactionRepository transactions,
         CategoryRepository categories,
+        CategorizationRuleRepository rules,
         ICurrentUser currentUser,
         CancellationToken ct = default)
     {
@@ -120,7 +122,48 @@ public static class TransactionEndpoints
             if (!categoryExists) return TypedResults.BadRequest(new { error = "Category not found." });
         }
 
+        var description = await transactions.GetDescriptionAsync(userId, id, ct);
         var updated = await transactions.SetCategoryAsync(userId, id, body.CategoryId, ct);
-        return updated ? TypedResults.NoContent() : TypedResults.NotFound();
+        if (!updated) return TypedResults.NotFound();
+
+        // Learn from the correction so the same merchant lands right next time, and back-apply to
+        // transactions already stored for it. Only on assigning a real category — clearing one
+        // says "this was wrong", not "everything from this merchant belongs nowhere".
+        var applied = 0;
+        if (body.CategoryId.HasValue && !string.IsNullOrWhiteSpace(description))
+            applied = await LearnFromCorrectionAsync(userId, description, body.CategoryId.Value, transactions, rules, ct);
+
+        return TypedResults.Ok(new { alsoUpdated = applied });
+    }
+
+    // Learned rules sit above the seeded defaults (priority 10) so an explicit correction always
+    // beats a generic seeded pattern that matched the same text.
+    private const int LearnedRulePriority = 100;
+
+    private static async Task<int> LearnFromCorrectionAsync(
+        Guid userId,
+        string description,
+        Guid categoryId,
+        TransactionRepository transactions,
+        CategorizationRuleRepository rules,
+        CancellationToken ct)
+    {
+        var merchant = MerchantNormalizer.MerchantKey(description);
+        if (string.IsNullOrWhiteSpace(merchant)) return 0;
+
+        await rules.UpsertLearnedRuleAsync(userId, merchant, categoryId, LearnedRulePriority, ct);
+
+        // Back-applied by the same substring test the rule itself will use, so what gets updated
+        // now is exactly what the rule would match later. Normalizing in C# rather than matching
+        // in SQL because the normalizer removes noise from the middle of the text — a LIKE against
+        // the raw description would miss rows this is specifically meant to catch.
+        var candidates = await transactions.GetAutoCategorizedDescriptionsAsync(userId, ct);
+        var matchingIds = candidates
+            .Where(c => MerchantNormalizer.Normalize(c.Description).Contains(merchant, StringComparison.OrdinalIgnoreCase)
+                        || c.Description.Contains(merchant, StringComparison.OrdinalIgnoreCase))
+            .Select(c => c.Id)
+            .ToList();
+
+        return await transactions.SetCategoryForManyAsync(userId, matchingIds, categoryId, ct);
     }
 }

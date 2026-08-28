@@ -19,6 +19,26 @@ public class CategorizationRuleRepository(IDbConnectionFactory connectionFactory
         return rows.AsList();
     }
 
+    // Learned rules (created when the user manually recategorizes) are upserted on their exact
+    // pattern so correcting the same merchant twice repoints the existing rule instead of piling
+    // up conflicting ones. Priority is used to rank learned rules above the seeded defaults.
+    public async Task UpsertLearnedRuleAsync(
+        Guid userId, string pattern, Guid categoryId, int priority, CancellationToken ct = default)
+    {
+        using var conn = await connectionFactory.CreateOpenConnectionAsync(ct);
+        await conn.ExecuteAsync(
+            """
+            UPDATE CategorizationRules
+            SET CategoryId = @categoryId, Priority = @priority
+            WHERE UserId = @userId AND Pattern = @pattern AND IsRegex = 0;
+
+            IF @@ROWCOUNT = 0
+                INSERT INTO CategorizationRules (Id, UserId, Pattern, IsRegex, CategoryId, Priority, CreatedAt)
+                VALUES (NEWID(), @userId, @pattern, 0, @categoryId, @priority, @now);
+            """,
+            new { userId, pattern, categoryId, priority, now = DateTime.UtcNow });
+    }
+
     public async Task InsertManyAsync(IEnumerable<CategorizationRule> rules, CancellationToken ct = default)
     {
         using var conn = await connectionFactory.CreateOpenConnectionAsync(ct);

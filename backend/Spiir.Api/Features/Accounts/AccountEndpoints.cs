@@ -221,12 +221,25 @@ public static class AccountEndpoints
         var imported = 0;
         var skipped = 0;
 
+        // Rows to actually import, resolved first so the whole file can be categorized in one
+        // batch rather than a rules pass (and possible Claude call) per row.
+        var toImport = new List<(int Index, ParsedCsvRow Row, string ExternalId)>();
         for (var i = 0; i < parsed.Rows.Count; i++)
         {
             var row = parsed.Rows[i];
             var externalId = CsvExternalId(row);
             if (!externalIds.Add(externalId)) { skipped++; continue; }
+            toImport.Add((i, row, externalId));
+        }
 
+        var needsCategorizing = toImport
+            .Where(x => x.Row.CategoryName is null || !categoriesByName.ContainsKey(x.Row.CategoryName))
+            .Select(x => x.Row.Description)
+            .ToList();
+        var categoryByDescription = await categorizer.CategorizeManyAsync(needsCategorizing, userId, ct);
+
+        foreach (var (i, row, externalId) in toImport)
+        {
             Guid? categoryId;
             bool isCategoryManual;
             if (row.CategoryName is not null && categoriesByName.TryGetValue(row.CategoryName, out var matchedId))
@@ -236,7 +249,7 @@ public static class AccountEndpoints
             }
             else
             {
-                categoryId = await categorizer.CategorizeAsync(row.Description, userId, ct);
+                categoryId = categoryByDescription.TryGetValue(row.Description, out var autoId) ? autoId : null;
                 isCategoryManual = false;
             }
 

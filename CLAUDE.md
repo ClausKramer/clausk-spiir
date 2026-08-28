@@ -110,7 +110,10 @@ adding a new repository method, default to scoping it by `userId` unless you hav
 Magic link → JWT + refresh cookie, detailed end-to-end in `docs/architecture.md`. Key points:
 - Raw tokens are never persisted — only SHA-256 hashes (`MagicLinkToken`, `RefreshToken`).
 - Magic-link tokens: 15 min TTL, single-use. JWT access tokens: 15 min TTL, HS256, claims `sub` + `email`.
-  Refresh tokens: 30-day TTL, rotated every use, httpOnly `Strict` cookie scoped to `/auth`.
+  Refresh tokens: 180-day sliding TTL (renewed on every use, so an active user never hits the
+  cap), rotated every use, httpOnly cookie scoped to `/auth`, `SameSite=None` in production
+  (frontend and API are on different domains — `Strict`/`Lax` would silently drop the cookie on
+  every cross-site refresh call) and `SameSite=Strict` in dev (same-origin via Vite's proxy).
 - The auth abstraction is `IPasswordlessAuthenticator` (`Features/Auth/`), implemented by
   `PasswordlessAuthenticator` — deliberately generic so passkeys/WebAuthn can be added later as an alternate
   implementation without touching endpoints.

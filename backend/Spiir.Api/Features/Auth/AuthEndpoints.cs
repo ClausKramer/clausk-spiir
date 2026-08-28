@@ -1,4 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
+using Spiir.Api.Options;
 
 namespace Spiir.Api.Features.Auth;
 
@@ -48,20 +50,23 @@ public static class AuthEndpoints
         string? token,
         IPasswordlessAuthenticator auth,
         HttpContext ctx,
+        IOptions<JwtOptions> jwtOptions,
         CancellationToken ct) =>
-        DoVerify(token, auth, ctx, ct);
+        DoVerify(token, auth, ctx, jwtOptions, ct);
 
     private static Task<IResult> VerifyPost(
         [FromBody] VerifyRequest body,
         IPasswordlessAuthenticator auth,
         HttpContext ctx,
+        IOptions<JwtOptions> jwtOptions,
         CancellationToken ct) =>
-        DoVerify(body.Token, auth, ctx, ct);
+        DoVerify(body.Token, auth, ctx, jwtOptions, ct);
 
     private static async Task<IResult> DoVerify(
         string? rawToken,
         IPasswordlessAuthenticator auth,
         HttpContext ctx,
+        IOptions<JwtOptions> jwtOptions,
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(rawToken))
@@ -70,7 +75,7 @@ public static class AuthEndpoints
         try
         {
             var result = await auth.VerifyMagicLinkAsync(rawToken, ct);
-            SetRefreshCookie(ctx, result.RefreshToken);
+            SetRefreshCookie(ctx, result.RefreshToken, jwtOptions);
             return TypedResults.Ok(new { accessToken = result.AccessToken, user = result.User });
         }
         catch (InvalidOperationException ex)
@@ -82,6 +87,7 @@ public static class AuthEndpoints
     private static async Task<IResult> Refresh(
         IPasswordlessAuthenticator auth,
         HttpContext ctx,
+        IOptions<JwtOptions> jwtOptions,
         CancellationToken ct)
     {
         var rawToken = ctx.Request.Cookies[CookieName];
@@ -91,7 +97,7 @@ public static class AuthEndpoints
         try
         {
             var result = await auth.RefreshAsync(rawToken, ct);
-            SetRefreshCookie(ctx, result.RefreshToken);
+            SetRefreshCookie(ctx, result.RefreshToken, jwtOptions);
             return TypedResults.Ok(new { accessToken = result.AccessToken, user = result.User });
         }
         catch (InvalidOperationException)
@@ -114,20 +120,35 @@ public static class AuthEndpoints
         return TypedResults.Ok(new { message = "Logged out." });
     }
 
-    private static void SetRefreshCookie(HttpContext ctx, string token)
+    private static void SetRefreshCookie(HttpContext ctx, string token, IOptions<JwtOptions> jwtOptions)
     {
-        ctx.Response.Cookies.Append(CookieName, token, new CookieOptions
-        {
-            HttpOnly = true,
-            Secure = !ctx.RequestServices.GetRequiredService<IWebHostEnvironment>().IsDevelopment(),
-            SameSite = SameSiteMode.Strict,
-            Expires = DateTimeOffset.UtcNow.AddDays(30),
-            Path = "/auth",
-        });
+        var options = BaseCookieOptions(ctx);
+        options.Expires = DateTimeOffset.UtcNow.AddDays(jwtOptions.Value.RefreshTokenDays);
+        ctx.Response.Cookies.Append(CookieName, token, options);
     }
 
     private static void ClearRefreshCookie(HttpContext ctx) =>
-        ctx.Response.Cookies.Delete(CookieName, new CookieOptions { Path = "/auth" });
+        ctx.Response.Cookies.Delete(CookieName, BaseCookieOptions(ctx));
+
+    // The frontend (Static Web App) and this API (Container Apps) are on entirely different
+    // domains, not just different origins on the same site — SameSite=Strict (or even Lax) blocks
+    // the browser from ever sending this cookie on the frontend's cross-site refresh call, so
+    // /auth/refresh silently 401s on every attempt and users get force-logged-out the moment their
+    // access token expires. SameSite=None (+ Secure, which it requires) is the only setting that
+    // works for this cross-site architecture. Locally, frontend and backend are same-origin
+    // through Vite's dev proxy, and None+Secure would be dropped anyway since dev runs over plain
+    // HTTP — Strict is both sufficient and correct there.
+    private static CookieOptions BaseCookieOptions(HttpContext ctx)
+    {
+        var isDev = ctx.RequestServices.GetRequiredService<IWebHostEnvironment>().IsDevelopment();
+        return new CookieOptions
+        {
+            HttpOnly = true,
+            Secure = !isDev,
+            SameSite = isDev ? SameSiteMode.Strict : SameSiteMode.None,
+            Path = "/auth",
+        };
+    }
 }
 
 public record RequestLinkRequest(string Email);

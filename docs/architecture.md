@@ -34,7 +34,10 @@ Browser                  Backend                         DB
 **Token rules:**
 - Magic link tokens: 15-minute TTL, single-use, stored as SHA-256 hex.
 - JWT access tokens: 15-minute TTL, HS256, claims `sub` (userId) + `email`.
-- Refresh tokens: 30-day TTL, rotated on every use (old revoked, new issued), httpOnly Strict cookie scoped to `/auth` path.
+- Refresh tokens: 180-day sliding TTL, rotated on every use (old revoked, new issued), httpOnly
+  cookie scoped to `/auth` path. `SameSite=None` in production (frontend and API are on different
+  domains, so `Strict`/`Lax` would block the cookie on every cross-site refresh call), `Strict` in
+  dev (same-origin via Vite's proxy).
 - Raw tokens are never stored — only SHA-256 hashes.
 
 The auth abstraction (`IPasswordlessAuthenticator`) is designed so passkeys/WebAuthn can be added later by implementing the same interface without touching endpoints.

@@ -57,4 +57,13 @@ public class BankAccountRepository(IDbConnectionFactory connectionFactory)
             "UPDATE BankAccounts SET LastSyncedAt = @syncedAt WHERE UserId = @userId AND Id = @id",
             new { userId, id, syncedAt });
     }
+
+    public async Task<bool> RenameAsync(Guid userId, Guid id, string name, CancellationToken ct = default)
+    {
+        using var conn = await connectionFactory.CreateOpenConnectionAsync(ct);
+        var rowsAffected = await conn.ExecuteAsync(
+            "UPDATE BankAccounts SET Name = @name WHERE UserId = @userId AND Id = @id",
+            new { userId, id, name });
+        return rowsAffected > 0;
+    }
 }

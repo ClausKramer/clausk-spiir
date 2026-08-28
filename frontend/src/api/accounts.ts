@@ -48,6 +48,10 @@ export async function deleteBankAccount(id: string): Promise<void> {
   await client.delete(`/accounts/${id}`)
 }
 
+export async function renameBankAccount(id: string, name: string): Promise<void> {
+  await client.patch(`/accounts/${id}`, { name })
+}
+
 export async function syncAll(): Promise<SyncResult> {
   const { data } = await client.post('/sync')
   return data

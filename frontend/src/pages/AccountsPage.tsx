@@ -1,6 +1,7 @@
+import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { getBankAccounts, deleteBankAccount, syncAll } from '../api/accounts'
+import { getBankAccounts, deleteBankAccount, renameBankAccount, syncAll, type BankAccount } from '../api/accounts'
 
 export function AccountsPage() {
   const qc = useQueryClient()
@@ -76,28 +77,80 @@ export function AccountsPage() {
         ) : (
           <div className="rounded-xl bg-white border border-slate-100 shadow-sm divide-y divide-slate-100">
             {accounts.map((acc) => (
-              <div key={acc.id} className="flex items-center justify-between px-6 py-4">
-                <div>
-                  <p className="font-medium text-slate-800">{acc.name}</p>
-                  {acc.iban && <p className="text-xs text-slate-400 mt-0.5">{acc.iban}</p>}
-                  <p className="text-xs text-slate-400">
-                    {acc.lastSyncedAt
-                      ? `Last synced ${new Date(acc.lastSyncedAt).toLocaleDateString('da-DK')}`
-                      : 'Never synced'}
-                  </p>
-                </div>
-                <button
-                  onClick={() => { if (confirm('Remove this account and all its transactions?')) doDelete(acc.id) }}
-                  disabled={deleting}
-                  className="text-sm text-red-500 hover:text-red-700 disabled:opacity-40"
-                >
-                  Remove
-                </button>
-              </div>
+              <AccountRow key={acc.id} account={acc} onDelete={() => doDelete(acc.id)} deleting={deleting} />
             ))}
           </div>
         )}
       </main>
+    </div>
+  )
+}
+
+function AccountRow({ account, onDelete, deleting }: { account: BankAccount; onDelete: () => void; deleting: boolean }) {
+  const qc = useQueryClient()
+  const [editing, setEditing] = useState(false)
+  const [name, setName] = useState(account.name)
+
+  const { mutate: doRename, isPending: renaming } = useMutation({
+    mutationFn: (newName: string) => renameBankAccount(account.id, newName),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['accounts'] })
+      setEditing(false)
+    },
+  })
+
+  function submit() {
+    const trimmed = name.trim()
+    if (!trimmed || trimmed === account.name) {
+      setEditing(false)
+      setName(account.name)
+      return
+    }
+    doRename(trimmed)
+  }
+
+  return (
+    <div className="flex items-center justify-between px-6 py-4">
+      <div className="min-w-0">
+        {editing ? (
+          <form
+            onSubmit={(e) => { e.preventDefault(); submit() }}
+            className="flex items-center gap-2"
+          >
+            <input
+              autoFocus
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onBlur={submit}
+              onKeyDown={(e) => { if (e.key === 'Escape') { setEditing(false); setName(account.name) } }}
+              disabled={renaming}
+              className="rounded border border-indigo-300 px-2 py-1 text-sm font-medium text-slate-800 outline-none focus:ring-2 focus:ring-indigo-200"
+            />
+          </form>
+        ) : (
+          <button
+            onClick={() => setEditing(true)}
+            className="group flex items-center gap-1.5 font-medium text-slate-800 hover:text-indigo-600"
+            title="Rename account"
+          >
+            {account.name}
+            <span className="text-xs text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity">✎</span>
+          </button>
+        )}
+        {account.iban && <p className="text-xs text-slate-400 mt-0.5">{account.iban}</p>}
+        <p className="text-xs text-slate-400">
+          {account.lastSyncedAt
+            ? `Last synced ${new Date(account.lastSyncedAt).toLocaleDateString('da-DK')}`
+            : 'Never synced'}
+        </p>
+      </div>
+      <button
+        onClick={() => { if (confirm('Remove this account and all its transactions?')) onDelete() }}
+        disabled={deleting}
+        className="text-sm text-red-500 hover:text-red-700 disabled:opacity-40 shrink-0"
+      >
+        Remove
+      </button>
     </div>
   )
 }

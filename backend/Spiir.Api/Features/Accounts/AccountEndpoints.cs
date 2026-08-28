@@ -18,6 +18,7 @@ public static class AccountEndpoints
         group.MapGet("/", ListAccounts);
         group.MapPost("/connect", ConnectBank);
         group.MapPost("/finalize", FinalizeConnection);
+        group.MapPatch("/{id:guid}", RenameAccount);
         group.MapDelete("/{id:guid}", DeleteAccount);
 
         return app;
@@ -153,6 +154,25 @@ public static class AccountEndpoints
         return TypedResults.Ok(new { accounts = created, count = created.Count });
     }
 
+    private static async Task<IResult> RenameAccount(
+        Guid id,
+        [FromBody] RenameAccountRequest req,
+        BankAccountRepository bankAccounts,
+        ICurrentUser currentUser,
+        CancellationToken ct)
+    {
+        var name = req.Name?.Trim();
+        if (string.IsNullOrWhiteSpace(name))
+            return TypedResults.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["name"] = ["Name is required."]
+            });
+
+        var userId = currentUser.GetRequiredUserId();
+        var renamed = await bankAccounts.RenameAsync(userId, id, name, ct);
+        return renamed ? TypedResults.NoContent() : TypedResults.NotFound();
+    }
+
     private static async Task<IResult> DeleteAccount(
         Guid id,
         BankAccountRepository bankAccounts,
@@ -167,3 +187,4 @@ public static class AccountEndpoints
 
 public record ConnectBankRequest(string AspspName, string AspspCountry);
 public record FinalizeRequest(string Ref, string Code);
+public record RenameAccountRequest(string Name);

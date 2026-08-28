@@ -16,6 +16,12 @@ public static partial class MerchantNormalizer
 
         var s = description.Trim();
 
+        // Danske Bank card entries pack merchant and location into backslash-delimited fields
+        // ("MCDVIBYMEGASYD\ \VIBYJ\", "NYX*WeArePadelOdderApS\ \Od..."), where only the first
+        // field is the merchant. Keep that and drop the rest.
+        var firstBackslash = s.IndexOf('\\');
+        if (firstBackslash > 0) s = s[..firstBackslash];
+
         // Danish bank prefixes for the payment mechanism, not the merchant:
         // "Bs" = Betalingsservice (direct debit), "Dankort-nota", "Visa/Dankort", "Køb" = purchase.
         s = LeadingPaymentPrefix().Replace(s, "");

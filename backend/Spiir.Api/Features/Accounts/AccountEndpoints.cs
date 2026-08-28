@@ -203,9 +203,9 @@ public static class AccountEndpoints
         if (account is null)
             return TypedResults.NotFound(new { error = "Account not found." });
 
-        string content;
-        using (var reader = new StreamReader(file.OpenReadStream(), Encoding.UTF8, detectEncodingFromByteOrderMarks: true))
-            content = await reader.ReadToEndAsync(ct);
+        using var buffer = new MemoryStream();
+        await file.OpenReadStream().CopyToAsync(buffer, ct);
+        var content = DecodeCsv(buffer.ToArray());
 
         var parsed = TransactionCsvParser.Parse(content);
         if (parsed.Rows.Count == 0)
@@ -223,11 +223,22 @@ public static class AccountEndpoints
 
         // Rows to actually import, resolved first so the whole file can be categorized in one
         // batch rather than a rules pass (and possible Claude call) per row.
+        //
+        // Identical rows within a file are counted rather than collapsed: buying the same thing
+        // twice at the same merchant on the same day is a real pattern (two scooter passes, two
+        // app-store charges), and keying only on date+amount+description silently dropped those.
+        // Including the occurrence index keeps re-importing the same file idempotent — the same
+        // rows land on the same indexes — while letting genuine repeats through.
+        var occurrences = new Dictionary<string, int>();
         var toImport = new List<(int Index, ParsedCsvRow Row, string ExternalId)>();
         for (var i = 0; i < parsed.Rows.Count; i++)
         {
             var row = parsed.Rows[i];
-            var externalId = CsvExternalId(row);
+            var rowKey = $"{row.BookingDate:O}|{row.Amount}|{row.Description}";
+            var occurrence = occurrences.TryGetValue(rowKey, out var seen) ? seen : 0;
+            occurrences[rowKey] = occurrence + 1;
+
+            var externalId = CsvExternalId(row, occurrence);
             if (!externalIds.Add(externalId)) { skipped++; continue; }
             toImport.Add((i, row, externalId));
         }
@@ -282,12 +293,32 @@ public static class AccountEndpoints
         });
     }
 
-    // Deterministic per (date, amount, description) so re-uploading the same file is idempotent —
-    // CSV rows have no bank-assigned id to dedup on the way synced transactions do. Prefixed to
-    // keep this id space distinct from anything a real bank could ever hand back.
-    private static string CsvExternalId(ParsedCsvRow row)
+    // Danish bank exports are frequently Latin-1 rather than UTF-8 (Danske Bank's are), where a
+    // lone 0xF8 byte is 'ø'. Decoded as UTF-8 that's an invalid sequence and silently becomes
+    // U+FFFD, which turns the "Beløb" header into "Bel�b" — the amount column then doesn't match
+    // any known alias and the whole file is rejected as unparseable. So: honour a BOM if present,
+    // otherwise try strict UTF-8 and fall back to Latin-1 when the bytes aren't valid UTF-8.
+    private static string DecodeCsv(byte[] bytes)
     {
-        var raw = $"{row.BookingDate:O}|{row.Amount}|{row.Description}";
+        if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
+            return Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3);
+
+        try
+        {
+            return new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true).GetString(bytes);
+        }
+        catch (DecoderFallbackException)
+        {
+            return Encoding.Latin1.GetString(bytes);
+        }
+    }
+
+    // Deterministic per (date, amount, description, occurrence) so re-uploading the same file is
+    // idempotent — CSV rows have no bank-assigned id to dedup on the way synced transactions do.
+    // Prefixed to keep this id space distinct from anything a real bank could ever hand back.
+    private static string CsvExternalId(ParsedCsvRow row, int occurrence)
+    {
+        var raw = $"{row.BookingDate:O}|{row.Amount}|{row.Description}|{occurrence}";
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(raw))).ToLowerInvariant();
         return $"csv:{hash[..32]}";
     }

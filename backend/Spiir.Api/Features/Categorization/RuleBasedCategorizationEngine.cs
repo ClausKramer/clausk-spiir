@@ -22,7 +22,11 @@ public class RuleBasedCategorizationEngine(
     public async Task<IReadOnlyDictionary<string, Guid>> CategorizeManyAsync(
         IReadOnlyList<string> descriptions, Guid userId, CancellationToken ct = default)
     {
-        var result = new Dictionary<string, Guid>();
+        // Case-insensitive to match how `distinct` below collapses descriptions: banks emit the
+        // same merchant with inconsistent casing ("DB Lommepenge" / "DB lommepenge"), and a
+        // case-sensitive result map would leave every variant except the one representative
+        // unable to find its own entry.
+        var result = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
         if (descriptions.Count == 0) return result;
 
         var userRules = await rules.GetAllForUserOrderedAsync(userId, ct);

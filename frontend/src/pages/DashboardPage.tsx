@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom'
 import { useMe, useLogout } from '../hooks/useAuth'
 import { getTransactions, getDashboard, recategorize } from '../api/transactions'
 import { getBankAccounts, syncAll } from '../api/accounts'
+import { syncDefaultCategories } from '../api/categories'
 import { CategoryPicker } from '../components/CategoryPicker'
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -38,12 +39,23 @@ export function DashboardPage() {
     onError: () => setStatusMessage('Sync failed. Please try again.'),
   })
 
+  // Sync defaults first, then recategorize — new categories are useless to the engine until they
+  // exist, so doing both in one click is the only order that actually helps.
   const { mutate: doRecategorize, isPending: recategorizing } = useMutation({
-    mutationFn: () => recategorize(true),
-    onSuccess: (result) => {
+    mutationFn: async () => {
+      const defaults = await syncDefaultCategories()
+      const result = await recategorize(true)
+      return { defaults, result }
+    },
+    onSuccess: ({ defaults, result }) => {
       qc.invalidateQueries({ queryKey: ['transactions'] })
       qc.invalidateQueries({ queryKey: ['dashboard'] })
-      setStatusMessage(result.message)
+      qc.invalidateQueries({ queryKey: ['categories'] })
+      setStatusMessage(
+        defaults.addedCategories > 0
+          ? `${defaults.message} ${result.message}`
+          : result.message,
+      )
     },
     onError: () => setStatusMessage('Recategorize failed. Please try again.'),
   })

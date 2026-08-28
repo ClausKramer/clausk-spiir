@@ -4,10 +4,65 @@ using Spiir.Api.Domain.Entities;
 namespace Spiir.Api.Data;
 
 // Seeds default Danish merchant categories and rules for a newly registered user.
+//
+// There's no formal standard for personal-finance categories — the closest thing, MCC
+// (ISO 18245, the card-network merchant codes), is far too granular at ~1000 codes. This follows
+// the ~20-item top-level set budgeting apps converge on, expressed in Danish and biased toward
+// merchants that actually show up on Danish statements.
+//
+// Income and Transfer matter as much as the spending categories: without them, salary and
+// movements between a user's own accounts have nothing valid to map to, so they sit permanently
+// uncategorized no matter how good the rules or the LLM fallback are.
 public class DefaultDataSeeder(CategoryRepository categories, CategorizationRuleRepository categorizationRules)
 {
     private static readonly (string Name, string Emoji, (string Pattern, bool IsRegex, int Priority)[] Rules)[] Defaults =
     [
+        ("Indkomst", "💰", [
+            (@"\bl[øo]n\b|lønoverførsel|salary", true, 20),
+            (@"udbetaling|refusion|tilbagebetaling", true, 10),
+            (@"su\b|dagpenge|pension|b[øo]rnepenge|b[øo]rnetilskud", true, 10),
+        ]),
+        ("Overførsel", "🔁", [
+            (@"overf[øo]rsel|overf[øo]rt|ovf\.|bs overf", true, 20),
+            (@"mobilepay", false, 10),
+            (@"egen konto|til budget|fra budget|opsparing til", true, 10),
+        ]),
+        ("Opsparing & Investering", "🐷", [
+            (@"june|nordnet|saxo|opsparing", true, 15),
+        ]),
+        ("Lån & Afdrag", "🏛️", [
+            (@"realkredit|totalkredit|santander|billån|afdrag|ydelse", true, 15),
+        ]),
+        // Name kept as-is (rather than something more descriptive) so backfilling defaults onto an
+        // existing account matches the category already there instead of creating a near-duplicate.
+        ("Bolig", "🏠", [
+            (@"husleje|ejendom|andelsbolig|fællesudg|grundejer", true, 10),
+        ]),
+        ("El, Vand & Varme", "💡", [
+            (@"\baura\b|ewii|norlys|andel energi|ørsted|fjernvarme|vandværk", true, 10),
+        ]),
+        ("Telefon & Internet", "📱", [
+            (@"telmore|yousee|telenor|telia|3danmark|hiper|fastspeed", true, 10),
+        ]),
+        ("Børn & Familie", "🧸", [
+            (@"lommepenge|daginstitution|vuggestue|b[øo]rnehave|sfo\b", true, 10),
+        ]),
+        ("Underholdning & Fritid", "🎭", [
+            (@"matchi|padel|smukfest|roskilde festival|biograf|nordisk film|kino", true, 10),
+            (@"mofibo|storytel|audible", true, 10),
+        ]),
+        ("Skat & Afgifter", "🧾", [
+            (@"skattestyrelsen|skat\b|ejerafgift|licens", true, 10),
+        ]),
+        ("Gaver & Donationer", "🎁", [
+            (@"b[øo]rnefonden|r[øo]de kors|unicef|donation|indsamling", true, 10),
+        ]),
+        ("Kontanter", "💵", [
+            (@"kontant|hævning|atm\b|automat", true, 10),
+        ]),
+        ("Uddannelse", "🎓", [
+            (@"studie|kursus|undervisning|lærebog", true, 10),
+        ]),
         ("Dagligvarer", "🛒", [
             (@"netto", false, 10),
             (@"rema\s*1000|rema1000", true, 10),
@@ -19,6 +74,7 @@ public class DefaultDataSeeder(CategoryRepository categories, CategorizationRule
             (@"brugsen|superbrugsen|dagli'brugsen", true, 10),
             (@"meny", false, 10),
             (@"\bspar\b", true, 10),
+            (@"\bcoop\b|kvickly|fakta", true, 10),
         ]),
         ("Transport", "🚂", [
             (@"dsb", false, 10),
@@ -34,7 +90,7 @@ public class DefaultDataSeeder(CategoryRepository categories, CategorizationRule
             (@"just\s*eat|wolt", true, 10),
         ]),
         ("Brændstof", "⛽", [
-            (@"circle\s*k|q8|shell|esso|ok\s*benzin", true, 10),
+            (@"circle\s*k|circlek|q8|shell|esso|ok\s*benzin|uno-?x", true, 10),
         ]),
         ("Apotek & Sundhed", "💊", [
             (@"matas", false, 10),
@@ -65,58 +121,83 @@ public class DefaultDataSeeder(CategoryRepository categories, CategorizationRule
             (@"zalando", false, 10),
             (@"coolshop", false, 10),
         ]),
-        ("Bank & Gebyrer", "🏦", [
-            (@"gebyr|overf[øo]rsel|rente", true, 10),
+        // Note: no "overførsel" pattern here — that belongs to the Overførsel category above, which
+        // matches it at a higher priority. Leaving it here too would make the winner depend on
+        // rule ordering rather than intent.
+        ("Bank & Gebyrer", "💳", [
+            (@"gebyr|rente|kortgebyr|valutatill[æa]g", true, 10),
         ]),
         ("Rejser", "✈️", [
             (@"norwegian|sas\b|easyjet|ryanair", true, 10),
-            (@"airbnb|booking\.com|hotels\.com", true, 10),
-        ]),
-        ("Bolig", "🏠", [
-            (@"husleje|ejendom|andelsbolig", true, 10),
+            (@"airbnb|booking\.com|hotels\.com|landal|feriepartner", true, 10),
         ]),
         ("Andet", "📌", []),
     ];
 
-    public async Task SeedForUserAsync(User user, CancellationToken ct = default)
+    public Task SeedForUserAsync(User user, CancellationToken ct = default) =>
+        SeedMissingForUserAsync(user.Id, ct);
+
+    /// <summary>
+    /// Adds any default categories and rules the user doesn't already have, matched by name and
+    /// by (pattern, category) respectively. Safe to re-run: seeding a new user and backfilling
+    /// newly-added defaults onto an existing one are the same operation, so the defaults list
+    /// stays the single source of truth. Never modifies or removes what's already there.
+    /// </summary>
+    public async Task<(int Categories, int Rules)> SeedMissingForUserAsync(Guid userId, CancellationToken ct = default)
     {
         var now = DateTime.UtcNow;
-        var newCategories = new List<Category>();
 
+        var existing = await categories.GetAllForUserAsync(userId, ct);
+        var categoryIdByName = existing.ToDictionary(c => c.Name, c => c.Id, StringComparer.OrdinalIgnoreCase);
+
+        var newCategories = new List<Category>();
         foreach (var (name, emoji, _) in Defaults)
         {
-            newCategories.Add(new Category
+            if (categoryIdByName.ContainsKey(name)) continue;
+
+            var category = new Category
             {
                 Id = Guid.NewGuid(),
-                UserId = user.Id,
+                UserId = userId,
                 Name = name,
                 Emoji = emoji,
                 CreatedAt = now,
-            });
+            };
+            newCategories.Add(category);
+            categoryIdByName[name] = category.Id;
         }
 
-        await categories.InsertManyAsync(newCategories, ct);
+        if (newCategories.Count > 0)
+            await categories.InsertManyAsync(newCategories, ct);
 
-        var rules = new List<CategorizationRule>();
-        for (var i = 0; i < Defaults.Length; i++)
+        var existingRules = (await categorizationRules.GetAllForUserOrderedAsync(userId, ct))
+            .Select(r => (r.Pattern, r.CategoryId))
+            .ToHashSet();
+
+        var newRules = new List<CategorizationRule>();
+        foreach (var (name, _, ruleDefs) in Defaults)
         {
-            var (_, _, rulesDefs) = Defaults[i];
-            var category = newCategories[i];
-            foreach (var (pattern, isRegex, priority) in rulesDefs)
+            var categoryId = categoryIdByName[name];
+            foreach (var (pattern, isRegex, priority) in ruleDefs)
             {
-                rules.Add(new CategorizationRule
+                if (!existingRules.Add((pattern, categoryId))) continue;
+
+                newRules.Add(new CategorizationRule
                 {
                     Id = Guid.NewGuid(),
-                    UserId = user.Id,
+                    UserId = userId,
                     Pattern = pattern,
                     IsRegex = isRegex,
-                    CategoryId = category.Id,
+                    CategoryId = categoryId,
                     Priority = priority,
                     CreatedAt = now,
                 });
             }
         }
 
-        await categorizationRules.InsertManyAsync(rules, ct);
+        if (newRules.Count > 0)
+            await categorizationRules.InsertManyAsync(newRules, ct);
+
+        return (newCategories.Count, newRules.Count);
     }
 }

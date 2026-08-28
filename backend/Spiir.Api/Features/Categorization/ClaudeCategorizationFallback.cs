@@ -20,7 +20,9 @@ public class ClaudeCategorizationFallback(
     public async Task<IReadOnlyDictionary<string, Guid>> CategorizeManyAsync(
         IReadOnlyList<string> descriptions, Guid userId, CancellationToken ct = default)
     {
-        var result = new Dictionary<string, Guid>();
+        // Case-insensitive for the same reason as the rules engine's map: callers look results up
+        // by each transaction's own description, which may differ in casing from the one sent.
+        var result = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
 
         if (string.IsNullOrEmpty(options.Value.ApiKey) || options.Value.ApiKey == "not-configured")
         {

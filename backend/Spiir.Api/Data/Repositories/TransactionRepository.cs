@@ -26,6 +26,20 @@ public class TransactionRepository(IDbConnectionFactory connectionFactory)
     private static string AccountFilterClause(IReadOnlyList<Guid>? accountIds) =>
         accountIds is { Count: > 0 } ? "AND t.BankAccountId IN @accountIds" : "";
 
+    // Enable Banking gives no link between the two legs of a transfer between the user's own
+    // accounts — each account's feed is independent. Heuristically matched here the way budgeting
+    // apps generally do it: another transaction, same user, a *different* account, the exact
+    // opposite amount, within a few days (banks don't always settle both legs same-day). Excluded
+    // from income/expense/category totals regardless of the current account filter — money moved
+    // between your own accounts was never real income or spending, whichever side you're viewing.
+    private const string TransferExclusionClause = """
+        AND NOT EXISTS (
+            SELECT 1 FROM Transactions t2
+            WHERE t2.UserId = t.UserId AND t2.BankAccountId <> t.BankAccountId
+              AND t2.Amount = -t.Amount AND ABS(DATEDIFF(DAY, t2.BookingDate, t.BookingDate)) <= 3
+        )
+        """;
+
     public async Task<(IReadOnlyList<TransactionListItem> Items, int TotalCount)> GetPageAsync(
         Guid userId, int page, int pageSize, IReadOnlyList<Guid>? accountIds, CancellationToken ct = default)
     {
@@ -62,7 +76,7 @@ public class TransactionRepository(IDbConnectionFactory connectionFactory)
                    SUM(CASE WHEN t.Amount > 0 THEN t.Amount ELSE 0 END) AS Income,
                    SUM(CASE WHEN t.Amount < 0 THEN -t.Amount ELSE 0 END) AS Expense
             FROM Transactions t
-            WHERE t.UserId = @userId AND t.BookingDate >= @from AND t.BookingDate < @to {filter}
+            WHERE t.UserId = @userId AND t.BookingDate >= @from AND t.BookingDate < @to {filter} {TransferExclusionClause}
             GROUP BY YEAR(t.BookingDate), MONTH(t.BookingDate)
             ORDER BY Year, Month
             """,
@@ -80,7 +94,7 @@ public class TransactionRepository(IDbConnectionFactory connectionFactory)
             SELECT t.CategoryId, c.Name AS CategoryName, c.Emoji AS CategoryEmoji, -SUM(t.Amount) AS Total
             FROM Transactions t
             LEFT JOIN Categories c ON c.Id = t.CategoryId
-            WHERE t.UserId = @userId AND t.BookingDate >= @from AND t.BookingDate < @to AND t.Amount < 0 {filter}
+            WHERE t.UserId = @userId AND t.BookingDate >= @from AND t.BookingDate < @to AND t.Amount < 0 {filter} {TransferExclusionClause}
             GROUP BY t.CategoryId, c.Name, c.Emoji
             ORDER BY Total DESC
             """,

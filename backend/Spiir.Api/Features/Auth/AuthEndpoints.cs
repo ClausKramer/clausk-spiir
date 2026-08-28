@@ -22,6 +22,7 @@ public static class AuthEndpoints
     private static async Task<IResult> RequestLink(
         [FromBody] RequestLinkRequest req,
         IPasswordlessAuthenticator auth,
+        IConfiguration config,
         HttpContext ctx,
         CancellationToken ct)
     {
@@ -31,7 +32,12 @@ public static class AuthEndpoints
                 ["email"] = ["Email is required."]
             });
 
-        var baseUrl = $"{ctx.Request.Scheme}://{ctx.Request.Host}";
+        // The magic link must point at the frontend (which owns the /auth/verify *page* that
+        // POSTs the token to this API), not at this API's own host — ctx.Request.Host is this
+        // API's host regardless of environment (even in dev, Vite's proxy has changeOrigin: true,
+        // so it rewrites the Host header to the backend's). CorsOrigin is already configured with
+        // the frontend's origin for exactly this reason (see Program.cs CORS policy / infra Bicep).
+        var baseUrl = config["CorsOrigin"] ?? $"{ctx.Request.Scheme}://{ctx.Request.Host}";
         await auth.RequestMagicLinkAsync(req.Email, baseUrl, ct);
         return TypedResults.Ok(new { message = "Check your email for the magic link." });
     }

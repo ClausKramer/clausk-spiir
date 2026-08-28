@@ -24,6 +24,7 @@ public static class AuthEndpoints
         IPasswordlessAuthenticator auth,
         IConfiguration config,
         HttpContext ctx,
+        ILoggerFactory loggerFactory,
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(req.Email))
@@ -38,6 +39,7 @@ public static class AuthEndpoints
         // so it rewrites the Host header to the backend's). CorsOrigin is already configured with
         // the frontend's origin for exactly this reason (see Program.cs CORS policy / infra Bicep).
         var baseUrl = config["CorsOrigin"] ?? $"{ctx.Request.Scheme}://{ctx.Request.Host}";
+        loggerFactory.CreateLogger("Auth").LogInformation("Magic link base URL resolved to {BaseUrl}", baseUrl);
         await auth.RequestMagicLinkAsync(req.Email, baseUrl, ct);
         return TypedResults.Ok(new { message = "Check your email for the magic link." });
     }

@@ -143,12 +143,14 @@ public class TransactionRepository(IDbConnectionFactory connectionFactory)
 
     // Auto-categorized rows only (IsCategoryManual = 0) — a user's own explicit choice is
     // authoritative and must never be overwritten by a rule learned from a different transaction.
+    // onlyUncategorized limits it further to rows nothing has managed to categorize yet.
     public async Task<IReadOnlyList<(Guid Id, string Description)>> GetAutoCategorizedDescriptionsAsync(
-        Guid userId, CancellationToken ct = default)
+        Guid userId, bool onlyUncategorized = false, CancellationToken ct = default)
     {
         using var conn = await connectionFactory.CreateOpenConnectionAsync(ct);
+        var uncategorizedFilter = onlyUncategorized ? "AND CategoryId IS NULL" : "";
         var rows = await conn.QueryAsync<(Guid Id, string Description)>(
-            "SELECT Id, Description FROM Transactions WHERE UserId = @userId AND IsCategoryManual = 0",
+            $"SELECT Id, Description FROM Transactions WHERE UserId = @userId AND IsCategoryManual = 0 {uncategorizedFilter}",
             new { userId });
         return rows.AsList();
     }

@@ -13,6 +13,7 @@ public static class TransactionEndpoints
         group.MapGet("/", GetTransactions);
         group.MapGet("/summary", GetMonthlySummary);
         group.MapGet("/dashboard", GetDashboard);
+        group.MapPost("/recategorize", Recategorize);
         group.MapPatch("/{id:guid}/category", SetCategory);
 
         return app;
@@ -103,6 +104,45 @@ public static class TransactionEndpoints
         });
     }
 
+    // Re-runs categorization over transactions already stored, which sync never revisits (it only
+    // categorizes what it just fetched). Needed whenever the rules change underneath existing
+    // data — new merchant rules, or the Claude fallback being configured after transactions were
+    // already imported. Never touches rows the user categorized by hand.
+    private static async Task<IResult> Recategorize(
+        TransactionRepository transactions,
+        ICategorizationEngine categorizer,
+        ICurrentUser currentUser,
+        bool onlyUncategorized = true,
+        CancellationToken ct = default)
+    {
+        var userId = currentUser.GetRequiredUserId();
+
+        var candidates = await transactions.GetAutoCategorizedDescriptionsAsync(userId, onlyUncategorized, ct);
+        if (candidates.Count == 0)
+            return TypedResults.Ok(new { examined = 0, updated = 0, message = "Nothing to recategorize." });
+
+        var categoryByDescription = await categorizer.CategorizeManyAsync(
+            candidates.Select(c => c.Description).ToList(), userId, ct);
+
+        // Grouped so each category is one UPDATE ... IN (...) rather than a round trip per row.
+        var updated = 0;
+        foreach (var group in candidates
+                     .Select(c => (c.Id, CategoryId: categoryByDescription.TryGetValue(c.Description, out var id) ? id : (Guid?)null))
+                     .Where(x => x.CategoryId.HasValue)
+                     .GroupBy(x => x.CategoryId!.Value))
+        {
+            updated += await transactions.SetCategoryForManyAsync(
+                userId, group.Select(x => x.Id).ToList(), group.Key, ct);
+        }
+
+        return TypedResults.Ok(new
+        {
+            examined = candidates.Count,
+            updated,
+            message = $"Recategorized {updated} of {candidates.Count} transaction(s).",
+        });
+    }
+
     private record SetCategoryRequest(Guid? CategoryId);
 
     private static async Task<IResult> SetCategory(
@@ -157,7 +197,7 @@ public static class TransactionEndpoints
         // now is exactly what the rule would match later. Normalizing in C# rather than matching
         // in SQL because the normalizer removes noise from the middle of the text — a LIKE against
         // the raw description would miss rows this is specifically meant to catch.
-        var candidates = await transactions.GetAutoCategorizedDescriptionsAsync(userId, ct);
+        var candidates = await transactions.GetAutoCategorizedDescriptionsAsync(userId, ct: ct);
         var matchingIds = candidates
             .Where(c => MerchantNormalizer.Normalize(c.Description).Contains(merchant, StringComparison.OrdinalIgnoreCase)
                         || c.Description.Contains(merchant, StringComparison.OrdinalIgnoreCase))

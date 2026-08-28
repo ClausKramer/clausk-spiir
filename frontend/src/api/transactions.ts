@@ -79,6 +79,19 @@ export interface DashboardData {
   }
 }
 
+export interface RecategorizeResult {
+  examined: number
+  updated: number
+  message: string
+}
+
+export async function recategorize(onlyUncategorized = true): Promise<RecategorizeResult> {
+  const { data } = await client.post('/transactions/recategorize', null, {
+    params: { onlyUncategorized },
+  })
+  return data
+}
+
 export async function getDashboard(accountIds: string[] = [], months = 6): Promise<DashboardData> {
   const params = new URLSearchParams()
   params.set('months', String(months))

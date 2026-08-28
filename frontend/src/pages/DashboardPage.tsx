@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { useMe, useLogout } from '../hooks/useAuth'
-import { getTransactions, getDashboard } from '../api/transactions'
+import { getTransactions, getDashboard, recategorize } from '../api/transactions'
 import { getBankAccounts, syncAll } from '../api/accounts'
 import { CategoryPicker } from '../components/CategoryPicker'
 
@@ -22,13 +22,30 @@ export function DashboardPage() {
   const { mutate: doLogout, isPending: loggingOut } = useLogout()
 
   const { data: accounts = [] } = useQuery({ queryKey: ['accounts'], queryFn: getBankAccounts })
+
+  // One banner for both actions — they're mutually exclusive in practice and both just report
+  // "here's what changed", so a shared slot avoids two competing status areas.
+  const [statusMessage, setStatusMessage] = useState<string | null>(null)
+
   const { mutate: doSync, isPending: syncing } = useMutation({
     mutationFn: syncAll,
-    onSuccess: () => {
+    onSuccess: (result) => {
       qc.invalidateQueries({ queryKey: ['transactions'] })
       qc.invalidateQueries({ queryKey: ['dashboard'] })
       qc.invalidateQueries({ queryKey: ['accounts'] })
+      setStatusMessage(result.message)
     },
+    onError: () => setStatusMessage('Sync failed. Please try again.'),
+  })
+
+  const { mutate: doRecategorize, isPending: recategorizing } = useMutation({
+    mutationFn: () => recategorize(true),
+    onSuccess: (result) => {
+      qc.invalidateQueries({ queryKey: ['transactions'] })
+      qc.invalidateQueries({ queryKey: ['dashboard'] })
+      setStatusMessage(result.message)
+    },
+    onError: () => setStatusMessage('Recategorize failed. Please try again.'),
   })
 
   // null = every account included. Once the user toggles one off, we track an explicit set.
@@ -89,8 +106,17 @@ export function DashboardPage() {
               onClick={() => doSync()}
               disabled={syncing || accounts.length === 0}
               className="rounded-lg border border-slate-700 bg-[#1a1f2e] px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-[#232b3b] disabled:opacity-40 transition-colors"
+              title="Fetch new transactions from your banks"
             >
               {syncing ? 'Syncing…' : 'Sync'}
+            </button>
+            <button
+              onClick={() => doRecategorize()}
+              disabled={recategorizing || accounts.length === 0}
+              className="rounded-lg border border-slate-700 bg-[#1a1f2e] px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-[#232b3b] disabled:opacity-40 transition-colors"
+              title="Re-run categorization on transactions that are still uncategorized"
+            >
+              {recategorizing ? 'Categorizing…' : 'Recategorize'}
             </button>
             <Link
               to="/accounts"
@@ -107,6 +133,19 @@ export function DashboardPage() {
             </button>
           </div>
         </div>
+
+        {statusMessage && (
+          <div className="mb-4 flex items-start justify-between gap-3 rounded-lg border border-slate-700 bg-[#1a1f2e] px-4 py-2.5 text-xs text-slate-300">
+            <span>{statusMessage}</span>
+            <button
+              onClick={() => setStatusMessage(null)}
+              className="shrink-0 text-slate-600 hover:text-slate-400"
+              aria-label="Dismiss"
+            >
+              ✕
+            </button>
+          </div>
+        )}
 
         {/* Account filter */}
         {accounts.length > 0 && (

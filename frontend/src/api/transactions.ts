@@ -32,11 +32,39 @@ export async function getTransactions(page = 1, pageSize = 50, accountIds: strin
 export async function setTransactionCategory(
   id: string,
   categoryId: string | null,
-): Promise<{ alsoUpdated: number }> {
+): Promise<{ merchantKey: string | null }> {
+  // Sets this transaction only. merchantKey is what a rule learned from it would match on —
+  // use it with getSimilarTransactions to offer applying the change more broadly.
   const { data } = await client.patch(`/transactions/${id}/category`, { categoryId })
-  // alsoUpdated: other transactions from the same merchant the backend recategorized by learning
-  // a rule from this correction.
-  return data ?? { alsoUpdated: 0 }
+  return data ?? { merchantKey: null }
+}
+
+export interface SimilarTransaction {
+  id: string
+  bookingDate: string
+  amount: number
+  currency: string
+  description: string
+  categoryId: string | null
+  categoryName: string | null
+  categoryEmoji: string | null
+}
+
+export async function getSimilarTransactions(
+  transactionId: string,
+): Promise<{ merchantKey: string; items: SimilarTransaction[] }> {
+  const { data } = await client.get('/transactions/similar', { params: { transactionId } })
+  return data
+}
+
+export async function applyToSimilar(params: {
+  categoryId: string
+  transactionIds: string[]
+  merchantKey: string | null
+  createRule: boolean
+}): Promise<{ updated: number; ruleCreated: boolean; message: string }> {
+  const { data } = await client.post('/transactions/apply-to-similar', params)
+  return data
 }
 
 export interface SpendingRow {

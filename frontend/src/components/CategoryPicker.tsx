@@ -2,6 +2,7 @@ import { useRef, useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getCategories } from '../api/categories'
 import { setTransactionCategory } from '../api/transactions'
+import { ApplyToSimilarDialog } from './ApplyToSimilarDialog'
 
 interface Props {
   transactionId: string
@@ -13,7 +14,7 @@ interface Props {
 
 export function CategoryPicker({ transactionId, categoryId, categoryName, categoryEmoji, dark = false }: Props) {
   const [open, setOpen] = useState(false)
-  const [alsoUpdated, setAlsoUpdated] = useState<number | null>(null)
+  const [pendingSimilar, setPendingSimilar] = useState<{ categoryId: string; label: string } | null>(null)
   const ref = useRef<HTMLDivElement>(null)
   const qc = useQueryClient()
 
@@ -25,13 +26,20 @@ export function CategoryPicker({ transactionId, categoryId, categoryName, catego
 
   const { mutate: pick, isPending } = useMutation({
     mutationFn: (newCategoryId: string | null) => setTransactionCategory(transactionId, newCategoryId),
-    onSuccess: (result) => {
+    onSuccess: (_result, newCategoryId) => {
       qc.invalidateQueries({ queryKey: ['transactions'] })
-      // The correction also teaches a rule, which can recategorize past transactions from the
-      // same merchant — that shifts the spending breakdown, so refresh it too.
       qc.invalidateQueries({ queryKey: ['dashboard'] })
-      if (result.alsoUpdated > 0) setAlsoUpdated(result.alsoUpdated)
       setOpen(false)
+
+      // Offer to extend the change to similar transactions. Only when assigning a category —
+      // clearing one means "this was wrong", not "everything from this merchant belongs nowhere".
+      if (newCategoryId) {
+        const picked = categories.find((c) => c.id === newCategoryId)
+        setPendingSimilar({
+          categoryId: newCategoryId,
+          label: picked ? `${picked.emoji ?? ''} ${picked.name}`.trim() : 'this category',
+        })
+      }
     },
   })
 
@@ -42,13 +50,6 @@ export function CategoryPicker({ transactionId, categoryId, categoryName, catego
     document.addEventListener('mousedown', handleClick)
     return () => document.removeEventListener('mousedown', handleClick)
   }, [])
-
-  // Auto-dismiss the "also updated N" note — it's a confirmation, not something to act on.
-  useEffect(() => {
-    if (alsoUpdated === null) return
-    const timer = setTimeout(() => setAlsoUpdated(null), 4000)
-    return () => clearTimeout(timer)
-  }, [alsoUpdated])
 
   const label = categoryId
     ? `${categoryEmoji ?? ''} ${categoryName ?? ''}`.trim()
@@ -68,13 +69,13 @@ export function CategoryPicker({ transactionId, categoryId, categoryName, catego
         {isPending ? '…' : label}
       </button>
 
-      {alsoUpdated !== null && (
-        <span
-          className={`ml-1.5 whitespace-nowrap text-[0.68rem] ${dark ? 'text-emerald-400' : 'text-emerald-600'}`}
-          title="A rule was learned from this correction and applied to matching transactions"
-        >
-          +{alsoUpdated} matched
-        </span>
+      {pendingSimilar && (
+        <ApplyToSimilarDialog
+          transactionId={transactionId}
+          categoryId={pendingSimilar.categoryId}
+          categoryLabel={pendingSimilar.label}
+          onClose={() => setPendingSimilar(null)}
+        />
       )}
 
       {open && (

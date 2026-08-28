@@ -21,3 +21,8 @@ export async function syncDefaultCategories(): Promise<SyncDefaultsResult> {
   const { data } = await client.post('/categories/sync-defaults')
   return data
 }
+
+export async function clearLearnedRules(): Promise<{ deleted: number; message: string }> {
+  const { data } = await client.delete('/categories/learned-rules')
+  return data
+}

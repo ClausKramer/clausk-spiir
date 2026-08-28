@@ -12,8 +12,27 @@ public static class CategoryEndpoints
 
         group.MapGet("/", GetCategories);
         group.MapPost("/sync-defaults", SyncDefaults);
+        group.MapDelete("/learned-rules", DeleteLearnedRules);
 
         return app;
+    }
+
+    // Learned rules come from a heuristic merchant key, so a bad one can quietly mis-file
+    // everything it matches. This clears them all so categorization falls back to the seeded
+    // defaults; existing transaction categories are left alone.
+    private static async Task<IResult> DeleteLearnedRules(
+        CategorizationRuleRepository rules,
+        ICurrentUser currentUser,
+        CancellationToken ct = default)
+    {
+        var userId = currentUser.GetRequiredUserId();
+        var deleted = await rules.DeleteLearnedRulesAsync(userId, minPriority: 100, ct);
+
+        return TypedResults.Ok(new
+        {
+            deleted,
+            message = deleted == 0 ? "No learned rules to clear." : $"Cleared {deleted} learned rule(s).",
+        });
     }
 
     // Adds default categories/rules introduced after this account was created — accounts only get

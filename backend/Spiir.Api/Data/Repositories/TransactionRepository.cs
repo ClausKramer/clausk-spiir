@@ -133,6 +133,25 @@ public class TransactionRepository(IDbConnectionFactory connectionFactory)
         return rowsAffected > 0;
     }
 
+    // Full rows (not just descriptions) for the "apply to similar transactions?" preview, so the
+    // user can see date/amount/current category before deciding which ones to include.
+    public async Task<IReadOnlyList<TransactionListItem>> GetAutoCategorizedForPreviewAsync(
+        Guid userId, CancellationToken ct = default)
+    {
+        using var conn = await connectionFactory.CreateOpenConnectionAsync(ct);
+        var rows = await conn.QueryAsync<TransactionListItem>(
+            """
+            SELECT t.Id, t.BankAccountId, t.BookingDate, t.Amount, t.Currency, t.Description,
+                   t.CategoryId, c.Name AS CategoryName, c.Emoji AS CategoryEmoji, t.IsCategoryManual
+            FROM Transactions t
+            LEFT JOIN Categories c ON c.Id = t.CategoryId
+            WHERE t.UserId = @userId AND t.IsCategoryManual = 0
+            ORDER BY t.BookingDate DESC, t.CreatedAt DESC, t.Id DESC
+            """,
+            new { userId });
+        return rows.AsList();
+    }
+
     public async Task<string?> GetDescriptionAsync(Guid userId, Guid transactionId, CancellationToken ct = default)
     {
         using var conn = await connectionFactory.CreateOpenConnectionAsync(ct);

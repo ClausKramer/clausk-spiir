@@ -39,6 +39,16 @@ public class CategorizationRuleRepository(IDbConnectionFactory connectionFactory
             new { userId, pattern, categoryId, priority, now = DateTime.UtcNow });
     }
 
+    // Learned rules only (priority above the seeded defaults) — an escape hatch for when a
+    // correction taught something too broad. Seeded defaults are left untouched.
+    public async Task<int> DeleteLearnedRulesAsync(Guid userId, int minPriority, CancellationToken ct = default)
+    {
+        using var conn = await connectionFactory.CreateOpenConnectionAsync(ct);
+        return await conn.ExecuteAsync(
+            "DELETE FROM CategorizationRules WHERE UserId = @userId AND Priority >= @minPriority",
+            new { userId, minPriority });
+    }
+
     public async Task InsertManyAsync(IEnumerable<CategorizationRule> rules, CancellationToken ct = default)
     {
         using var conn = await connectionFactory.CreateOpenConnectionAsync(ct);

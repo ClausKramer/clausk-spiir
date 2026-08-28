@@ -26,6 +26,11 @@ public static partial class MerchantNormalizer
         // "Bs" = Betalingsservice (direct debit), "Dankort-nota", "Visa/Dankort", "Køb" = purchase.
         s = LeadingPaymentPrefix().Replace(s, "");
 
+        // Danske Bank prefixes card entries with the country of the terminal ("Danmark GO ON VIBY
+        // J", "Danmark Wash World 826"). Left in place it becomes the merchant key for every
+        // domestic card purchase, so one correction would recategorize all of them.
+        s = LeadingCountryName().Replace(s, "");
+
         s = MaskedCardNumber().Replace(s, " ");   // 1234******5678, xxxx1234
         s = DateLike().Replace(s, " ");           // 04.11, 04-11-2026, 2026-11-04
         s = LongDigitRun().Replace(s, " ");       // store/terminal/reference ids (4+ digits)
@@ -68,6 +73,10 @@ public static partial class MerchantNormalizer
     [GeneratedRegex(@"^\s*(bs|betalingsservice|dankort-?nota|visa/?dankort|visa|dankort|køb|kob|overførsel|ovf\.?)\s+",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex LeadingPaymentPrefix();
+
+    [GeneratedRegex(@"^\s*(danmark|denmark|sverige|sweden|norge|norway|tyskland|germany|spanien|spain)\s+",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex LeadingCountryName();
 
     [GeneratedRegex(@"\b[\dxX*]{4,}[*x]{2,}[\dxX*]*\b|\b[xX*]{2,}\d{2,4}\b", RegexOptions.CultureInvariant)]
     private static partial Regex MaskedCardNumber();

@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom'
 import { useMe, useLogout } from '../hooks/useAuth'
 import { getTransactions, getDashboard, recategorize } from '../api/transactions'
 import { getBankAccounts, syncAll } from '../api/accounts'
-import { syncDefaultCategories } from '../api/categories'
+import { syncDefaultCategories, clearLearnedRules } from '../api/categories'
 import { CategoryPicker } from '../components/CategoryPicker'
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -58,6 +58,16 @@ export function DashboardPage() {
       )
     },
     onError: () => setStatusMessage('Recategorize failed. Please try again.'),
+  })
+
+  const { mutate: doClearRules, isPending: clearingRules } = useMutation({
+    mutationFn: clearLearnedRules,
+    onSuccess: (result) => {
+      qc.invalidateQueries({ queryKey: ['transactions'] })
+      qc.invalidateQueries({ queryKey: ['dashboard'] })
+      setStatusMessage(`${result.message} Run Recategorize to re-apply the default rules.`)
+    },
+    onError: () => setStatusMessage('Could not clear learned rules. Please try again.'),
   })
 
   // null = every account included. Once the user toggles one off, we track an explicit set.
@@ -129,6 +139,16 @@ export function DashboardPage() {
               title="Re-run categorization on transactions that are still uncategorized"
             >
               {recategorizing ? 'Categorizing…' : 'Recategorize'}
+            </button>
+            <button
+              onClick={() => {
+                if (confirm('Clear all rules learned from your corrections? Default rules and existing categories are kept.')) doClearRules()
+              }}
+              disabled={clearingRules}
+              className="rounded-lg border border-slate-800 px-3 py-1.5 text-xs font-medium text-slate-500 hover:bg-[#1a1f2e] hover:text-slate-300 disabled:opacity-40 transition-colors"
+              title="Remove rules learned from your corrections, e.g. if one turned out too broad"
+            >
+              {clearingRules ? 'Clearing…' : 'Clear learned rules'}
             </button>
             <Link
               to="/accounts"

@@ -14,6 +14,8 @@ public static class TransactionEndpoints
         group.MapGet("/summary", GetMonthlySummary);
         group.MapGet("/dashboard", GetDashboard);
         group.MapPost("/recategorize", Recategorize);
+        group.MapGet("/similar", GetSimilar);
+        group.MapPost("/apply-to-similar", ApplyToSimilar);
         group.MapPatch("/{id:guid}/category", SetCategory);
 
         return app;
@@ -166,44 +168,99 @@ public static class TransactionEndpoints
         var updated = await transactions.SetCategoryAsync(userId, id, body.CategoryId, ct);
         if (!updated) return TypedResults.NotFound();
 
-        // Learn from the correction so the same merchant lands right next time, and back-apply to
-        // transactions already stored for it. Only on assigning a real category — clearing one
-        // says "this was wrong", not "everything from this merchant belongs nowhere".
-        var applied = 0;
-        if (body.CategoryId.HasValue && !string.IsNullOrWhiteSpace(description))
-            applied = await LearnFromCorrectionAsync(userId, description, body.CategoryId.Value, transactions, rules, ct);
+        // Only ever this one transaction. Applying to similar ones, and learning a rule from the
+        // correction, are a separate confirmed step (/similar then /apply-to-similar) — matching
+        // is a heuristic, and silently rewriting dozens of unrelated rows on a single click is
+        // both surprising and tedious to undo.
+        var merchant = body.CategoryId.HasValue && !string.IsNullOrWhiteSpace(description)
+            ? MerchantNormalizer.MerchantKey(description)
+            : null;
 
-        return TypedResults.Ok(new { alsoUpdated = applied });
+        return TypedResults.Ok(new { merchantKey = merchant });
     }
 
     // Learned rules sit above the seeded defaults (priority 10) so an explicit correction always
     // beats a generic seeded pattern that matched the same text.
     private const int LearnedRulePriority = 100;
 
-    private static async Task<int> LearnFromCorrectionAsync(
-        Guid userId,
-        string description,
-        Guid categoryId,
+    // Auto-categorized transactions that a rule learned from this one would also match. Matched by
+    // the same substring test the rule itself uses, so the preview is exactly what would change.
+    // Normalized in C# rather than matched in SQL because the normalizer removes noise from the
+    // middle of the text — a LIKE against the raw description would miss the rows this targets.
+    private static async Task<IResult> GetSimilar(
+        Guid transactionId,
         TransactionRepository transactions,
-        CategorizationRuleRepository rules,
-        CancellationToken ct)
+        ICurrentUser currentUser,
+        CancellationToken ct = default)
     {
+        var userId = currentUser.GetRequiredUserId();
+
+        var description = await transactions.GetDescriptionAsync(userId, transactionId, ct);
+        if (description is null) return TypedResults.NotFound();
+
         var merchant = MerchantNormalizer.MerchantKey(description);
-        if (string.IsNullOrWhiteSpace(merchant)) return 0;
+        if (string.IsNullOrWhiteSpace(merchant))
+            return TypedResults.Ok(new { merchantKey = merchant, items = Array.Empty<object>() });
 
-        await rules.UpsertLearnedRuleAsync(userId, merchant, categoryId, LearnedRulePriority, ct);
-
-        // Back-applied by the same substring test the rule itself will use, so what gets updated
-        // now is exactly what the rule would match later. Normalizing in C# rather than matching
-        // in SQL because the normalizer removes noise from the middle of the text — a LIKE against
-        // the raw description would miss rows this is specifically meant to catch.
-        var candidates = await transactions.GetAutoCategorizedDescriptionsAsync(userId, ct: ct);
-        var matchingIds = candidates
-            .Where(c => MerchantNormalizer.Normalize(c.Description).Contains(merchant, StringComparison.OrdinalIgnoreCase)
-                        || c.Description.Contains(merchant, StringComparison.OrdinalIgnoreCase))
-            .Select(c => c.Id)
+        var candidates = await transactions.GetAutoCategorizedForPreviewAsync(userId, ct);
+        var matches = candidates
+            .Where(c => c.Id != transactionId && Matches(c.Description, merchant))
+            .Select(c => new
+            {
+                c.Id,
+                c.BookingDate,
+                c.Amount,
+                c.Currency,
+                c.Description,
+                c.CategoryId,
+                c.CategoryName,
+                c.CategoryEmoji,
+            })
             .ToList();
 
-        return await transactions.SetCategoryForManyAsync(userId, matchingIds, categoryId, ct);
+        return TypedResults.Ok(new { merchantKey = merchant, items = matches });
+    }
+
+    private static bool Matches(string description, string merchant) =>
+        MerchantNormalizer.Normalize(description).Contains(merchant, StringComparison.OrdinalIgnoreCase)
+        || description.Contains(merchant, StringComparison.OrdinalIgnoreCase);
+
+    private record ApplyToSimilarRequest(Guid CategoryId, Guid[] TransactionIds, string? MerchantKey, bool CreateRule);
+
+    // Applies a category to the transactions the user picked out of the preview, and optionally
+    // remembers the choice as a rule for future imports. Both parts are opt-in: someone may want
+    // to fix these rows without committing to a rule, or vice versa.
+    private static async Task<IResult> ApplyToSimilar(
+        ApplyToSimilarRequest body,
+        TransactionRepository transactions,
+        CategoryRepository categories,
+        CategorizationRuleRepository rules,
+        ICurrentUser currentUser,
+        CancellationToken ct = default)
+    {
+        var userId = currentUser.GetRequiredUserId();
+
+        if (!await categories.ExistsAsync(userId, body.CategoryId, ct))
+            return TypedResults.BadRequest(new { error = "Category not found." });
+
+        var updated = body.TransactionIds.Length > 0
+            ? await transactions.SetCategoryForManyAsync(userId, body.TransactionIds, body.CategoryId, ct)
+            : 0;
+
+        var ruleCreated = false;
+        if (body.CreateRule && !string.IsNullOrWhiteSpace(body.MerchantKey))
+        {
+            await rules.UpsertLearnedRuleAsync(userId, body.MerchantKey, body.CategoryId, LearnedRulePriority, ct);
+            ruleCreated = true;
+        }
+
+        return TypedResults.Ok(new
+        {
+            updated,
+            ruleCreated,
+            message = ruleCreated
+                ? $"Updated {updated} transaction(s) and saved a rule for future ones."
+                : $"Updated {updated} transaction(s).",
+        });
     }
 }

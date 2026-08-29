@@ -11,7 +11,17 @@ public interface IEnableBankingClient
     // Exchanges the `code` returned on the redirect callback for a session and the accounts it grants access to.
     Task<EnableBankingSession> CreateSessionAsync(string code, CancellationToken ct = default);
 
-    Task<IReadOnlyList<EnableBankingTransaction>> GetTransactionsAsync(string accountUid, DateOnly? dateFrom = null, CancellationToken ct = default);
+    /// <summary>
+    /// Fetches transactions for an account, following continuation keys to the end.
+    /// </summary>
+    /// <param name="longestHistory">
+    /// Uses Enable Banking's <c>strategy=longest</c>, which starts from the earliest transaction
+    /// the bank still exposes rather than a fixed window, treating <paramref name="dateFrom"/> as
+    /// a hint. Intended for an account's first sync: banks generally offer full history only
+    /// shortly after consent is granted, and fall back to ~90 days once that window passes.
+    /// </param>
+    Task<IReadOnlyList<EnableBankingTransaction>> GetTransactionsAsync(
+        string accountUid, DateOnly? dateFrom = null, bool longestHistory = false, CancellationToken ct = default);
 }
 
 public record EnableBankingSession(string SessionId, IReadOnlyList<EnableBankingAccount> Accounts);

@@ -30,7 +30,7 @@ export function DashboardPage() {
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
 
   const { mutate: doSync, isPending: syncing } = useMutation({
-    mutationFn: syncAll,
+    mutationFn: (fullHistory: boolean) => syncAll(fullHistory),
     onSuccess: (result) => {
       qc.invalidateQueries({ queryKey: ['transactions'] })
       qc.invalidateQueries({ queryKey: ['dashboard'] })
@@ -144,7 +144,7 @@ export function DashboardPage() {
           </div>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => doSync()}
+              onClick={() => doSync(false)}
               disabled={syncing || accounts.length === 0}
               className="rounded-lg border border-slate-700 bg-[#1a1f2e] px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-[#232b3b] disabled:opacity-40 transition-colors"
               title="Fetch new transactions from your banks"

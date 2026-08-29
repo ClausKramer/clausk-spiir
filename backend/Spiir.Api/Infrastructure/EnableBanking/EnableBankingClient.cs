@@ -57,7 +57,7 @@ public class EnableBankingClient(
     }
 
     public async Task<IReadOnlyList<EnableBankingTransaction>> GetTransactionsAsync(
-        string accountUid, DateOnly? dateFrom = null, CancellationToken ct = default)
+        string accountUid, DateOnly? dateFrom = null, bool longestHistory = false, CancellationToken ct = default)
     {
         var http = AuthenticatedClient();
         var all = new List<EnableBankingTransaction>();
@@ -70,6 +70,10 @@ public class EnableBankingClient(
         {
             var query = new List<string>();
             if (dateFrom.HasValue) query.Add($"date_from={dateFrom.Value:yyyy-MM-dd}");
+            // With this strategy the API can legitimately return an empty page alongside a
+            // continuation key, so the loop below must keep following keys rather than stopping
+            // at the first empty result.
+            if (longestHistory) query.Add("strategy=longest");
             if (continuationKey is not null) query.Add($"continuation_key={Uri.EscapeDataString(continuationKey)}");
 
             var url = $"/accounts/{accountUid}/transactions";

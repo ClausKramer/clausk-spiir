@@ -26,7 +26,8 @@ public static class SyncEndpoints
         ICategorizationEngine categorizer,
         ICurrentUser currentUser,
         ILoggerFactory loggerFactory,
-        CancellationToken ct)
+        bool fullHistory = false,
+        CancellationToken ct = default)
     {
         var userId = currentUser.GetRequiredUserId();
         var accounts = await bankAccounts.GetAllForUserAsync(userId, ct);
@@ -39,7 +40,9 @@ public static class SyncEndpoints
 
         foreach (var account in accounts)
         {
-            if (account.LastSyncedAt.HasValue && now - account.LastSyncedAt.Value < MinSyncGap)
+            // The RTS cap applies to *unattended* polling; a full-history fetch is an explicit
+            // user action, so the gap doesn't apply and would otherwise just block it.
+            if (!fullHistory && account.LastSyncedAt.HasValue && now - account.LastSyncedAt.Value < MinSyncGap)
             {
                 logger.LogInformation("Skipping account {Id} (synced {Ago:0}m ago)", account.Id,
                     (now - account.LastSyncedAt.Value).TotalMinutes);
@@ -49,12 +52,21 @@ public static class SyncEndpoints
 
             try
             {
-                // Fetch from earliest unsynced date (or last 90 days on first sync)
-                DateOnly? dateFrom = account.LastSyncedAt.HasValue
-                    ? DateOnly.FromDateTime(account.LastSyncedAt.Value.AddDays(-1))
-                    : DateOnly.FromDateTime(now.AddDays(-90));
+                // First sync asks for the longest history the bank will give rather than a fixed
+                // window — a hardcoded 90 days silently truncated everything older, and banks
+                // typically only expose full history for a short period after consent is granted,
+                // so a too-small first request loses data that can't be re-fetched later.
+                // Subsequent syncs just need what's happened since, with a day of overlap for
+                // transactions that settled late (dedup on ExternalTransactionId handles the rest).
+                // fullHistory forces the same path for an already-synced account, since accounts
+                // synced under the old fixed-window behaviour are missing everything before it.
+                var wantLongest = fullHistory || !account.LastSyncedAt.HasValue;
+                DateOnly? dateFrom = wantLongest
+                    ? null
+                    : DateOnly.FromDateTime(account.LastSyncedAt!.Value.AddDays(-1));
 
-                var ebTransactions = await eb.GetTransactionsAsync(account.ExternalAccountId, dateFrom, ct);
+                var ebTransactions = await eb.GetTransactionsAsync(
+                    account.ExternalAccountId, dateFrom, longestHistory: wantLongest, ct);
                 logger.LogInformation("Fetched {Count} transactions for account {Id}", ebTransactions.Count, account.Id);
 
                 // Load existing IDs to avoid duplicates

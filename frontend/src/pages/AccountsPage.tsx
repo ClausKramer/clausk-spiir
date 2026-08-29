@@ -16,10 +16,11 @@ export function AccountsPage() {
   })
 
   const { mutate: doSync, isPending: syncing, data: syncResult } = useMutation({
-    mutationFn: syncAll,
+    mutationFn: (fullHistory: boolean) => syncAll(fullHistory),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['accounts'] })
       qc.invalidateQueries({ queryKey: ['transactions'] })
+      qc.invalidateQueries({ queryKey: ['dashboard'] })
     },
   })
 
@@ -37,11 +38,22 @@ export function AccountsPage() {
           </p>
           <div className="flex gap-2">
             <button
-              onClick={() => doSync()}
+              onClick={() => doSync(false)}
               disabled={syncing || accounts.length === 0}
               className="rounded-lg bg-slate-700 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-40"
+              title="Fetch transactions added since the last sync"
             >
               {syncing ? 'Syncing…' : 'Sync all'}
+            </button>
+            <button
+              onClick={() => {
+                if (confirm('Fetch the oldest transactions each bank still offers? This can take a while, and banks usually stop offering full history some time after you connect the account.')) doSync(true)
+              }}
+              disabled={syncing || accounts.length === 0}
+              className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-40"
+              title="Fetch as far back as each bank allows, not just what's new"
+            >
+              Fetch full history
             </button>
             <Link
               to="/accounts/connect"

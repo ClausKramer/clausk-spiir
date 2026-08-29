@@ -71,7 +71,12 @@ export async function importCsv(accountId: string, file: File): Promise<ImportCs
   return data
 }
 
-export async function syncAll(): Promise<SyncResult> {
-  const { data } = await client.post('/sync')
+// fullHistory asks each bank for the earliest transactions it still exposes, rather than only
+// what's new since the last sync. Worth doing once per account — banks generally stop offering
+// full history a while after consent is granted.
+export async function syncAll(fullHistory = false): Promise<SyncResult> {
+  const { data } = await client.post('/sync', null, {
+    params: fullHistory ? { fullHistory: true } : {},
+  })
   return data
 }

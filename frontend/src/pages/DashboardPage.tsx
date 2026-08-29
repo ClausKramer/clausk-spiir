@@ -99,8 +99,11 @@ export function DashboardPage() {
   })
 
   const { data: txPage, isLoading: txLoading } = useQuery({
-    queryKey: ['transactions', 1, accountIdsParam, period],
-    queryFn: () => getTransactions(1, 50, accountIdsParam, period),
+    queryKey: ['transactions', 1, accountIdsParam, period, 'settled'],
+    // includeFuture: false — scheduled payments are excluded from every figure on this page, so
+    // listing them here would only invite the question of why they don't add up. They stay
+    // visible on the per-account list.
+    queryFn: () => getTransactions(1, 50, accountIdsParam, period, false),
     enabled: !noneSelected,
     placeholderData: (prev) => prev,
   })
@@ -367,10 +370,12 @@ export function DashboardPage() {
             {/* Transactions */}
             <Section
               title={(() => {
+                // Transfers stay listed but marked; scheduled payments aren't listed here at all,
+                // so the wording distinguishes them rather than lumping both under "not counted".
                 const notes = []
-                if (dashboard?.excludedTransfers) notes.push(`${dashboard.excludedTransfers} transfer`)
-                if (dashboard?.excludedFuture) notes.push(`${dashboard.excludedFuture} scheduled`)
-                return notes.length > 0 ? `📋 Transactions — ${notes.join(', ')} not counted` : '📋 Transactions'
+                if (dashboard?.excludedTransfers) notes.push(`${dashboard.excludedTransfers} transfer legs marked`)
+                if (dashboard?.excludedFuture) notes.push(`${dashboard.excludedFuture} scheduled hidden`)
+                return notes.length > 0 ? `📋 Transactions — ${notes.join(', ')}` : '📋 Transactions'
               })()}
             >
               {txLoading ? (

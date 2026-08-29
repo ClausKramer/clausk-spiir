@@ -29,6 +29,7 @@ public static class TransactionEndpoints
         Guid[]? accountIds = null,
         int? year = null,
         int? month = null,
+        bool includeFuture = true,
         CancellationToken ct = default)
     {
         page = Math.Max(1, page);
@@ -42,7 +43,11 @@ public static class TransactionEndpoints
         };
 
         var userId = currentUser.GetRequiredUserId();
-        var (items, total) = await transactions.GetPageAsync(userId, page, pageSize, accountIds, from, to, ct);
+        // The dashboard opts out of scheduled payments — it's an analysis view, and rows excluded
+        // from every figure on the page are noise there. The per-account list keeps them, since
+        // that view is for seeing everything the bank has on an account.
+        var (items, total) = await transactions.GetPageAsync(
+            userId, page, pageSize, accountIds, from, to, includeFuture ? null : Today, ct);
 
         // Which rows the dashboard's totals left out as matched internal transfers. Computed over
         // the whole period rather than the current page — pairing depends on the counterpart being

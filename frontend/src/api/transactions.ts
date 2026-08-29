@@ -24,12 +24,14 @@ export interface TransactionPage {
   pageSize: number
 }
 
-// period is optional: the dashboard scopes to its selection, the per-account list shows everything.
+// period and includeFuture are optional: the dashboard scopes to its selection and hides
+// bank-scheduled payments, while the per-account list shows an account's full history as-is.
 export async function getTransactions(
   page = 1,
   pageSize = 50,
   accountIds: string[] = [],
   period?: Period,
+  includeFuture = true,
 ): Promise<TransactionPage> {
   const params = new URLSearchParams()
   params.set('page', String(page))
@@ -39,6 +41,7 @@ export async function getTransactions(
     params.set('year', String(period.year))
     if (period.month !== null) params.set('month', String(period.month))
   }
+  if (!includeFuture) params.set('includeFuture', 'false')
   const { data } = await client.get('/transactions', { params })
   return data
 }

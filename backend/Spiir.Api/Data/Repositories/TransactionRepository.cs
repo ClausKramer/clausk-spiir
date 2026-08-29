@@ -64,20 +64,22 @@ public class TransactionRepository(IDbConnectionFactory connectionFactory)
     }
 
     // from/to are optional: the dashboard scopes to its selected period, while the per-account
-    // list shows everything on record.
+    // list shows everything on record. notAfter drops bank-scheduled future payments; applied in
+    // SQL rather than after paging so page sizes and the total count stay consistent.
     public async Task<(IReadOnlyList<TransactionListItem> Items, int TotalCount)> GetPageAsync(
         Guid userId, int page, int pageSize, IReadOnlyList<Guid>? accountIds,
-        DateOnly? from = null, DateOnly? to = null, CancellationToken ct = default)
+        DateOnly? from = null, DateOnly? to = null, DateOnly? notAfter = null, CancellationToken ct = default)
     {
         using var conn = await connectionFactory.CreateOpenConnectionAsync(ct);
         var filter = AccountFilterClause(accountIds);
         var periodFilter = from.HasValue && to.HasValue
             ? "AND t.BookingDate >= @from AND t.BookingDate < @to"
             : "";
+        var futureFilter = notAfter.HasValue ? "AND t.BookingDate <= @notAfter" : "";
 
         var total = await conn.ExecuteScalarAsync<int>(
-            $"SELECT COUNT(*) FROM Transactions t WHERE t.UserId = @userId {filter} {periodFilter}",
-            new { userId, accountIds, from, to });
+            $"SELECT COUNT(*) FROM Transactions t WHERE t.UserId = @userId {filter} {periodFilter} {futureFilter}",
+            new { userId, accountIds, from, to, notAfter });
 
         var items = await conn.QueryAsync<TransactionListItem>(
             $"""
@@ -85,11 +87,11 @@ public class TransactionRepository(IDbConnectionFactory connectionFactory)
                    t.CategoryId, c.Name AS CategoryName, c.Emoji AS CategoryEmoji, t.IsCategoryManual
             FROM Transactions t
             LEFT JOIN Categories c ON c.Id = t.CategoryId
-            WHERE t.UserId = @userId {filter} {periodFilter}
+            WHERE t.UserId = @userId {filter} {periodFilter} {futureFilter}
             ORDER BY t.BookingDate DESC, t.CreatedAt DESC, t.Id DESC
             OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY
             """,
-            new { userId, accountIds, from, to, offset = (page - 1) * pageSize, pageSize });
+            new { userId, accountIds, from, to, notAfter, offset = (page - 1) * pageSize, pageSize });
 
         return (items.AsList(), total);
     }

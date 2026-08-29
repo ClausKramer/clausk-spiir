@@ -44,8 +44,30 @@ public static class TransactionEndpoints
         var userId = currentUser.GetRequiredUserId();
         var (items, total) = await transactions.GetPageAsync(userId, page, pageSize, accountIds, from, to, ct);
 
-        return TypedResults.Ok(new { items, totalCount = total, page, pageSize });
+        return TypedResults.Ok(new { items = items.Select(WithFutureFlag), totalCount = total, page, pageSize });
     }
+
+    // Banks report scheduled payments alongside settled ones, dated when they will happen. They
+    // haven't moved any money yet, so they're kept out of every total and flagged instead — the
+    // client marks them rather than hiding them, since a scheduled payment is still worth seeing.
+    private static DateOnly Today => DateOnly.FromDateTime(DateTime.UtcNow);
+
+    private static bool IsFuture(TransactionListItem t) => t.BookingDate > Today;
+
+    private static object WithFutureFlag(TransactionListItem t) => new
+    {
+        t.Id,
+        t.BankAccountId,
+        t.BookingDate,
+        t.Amount,
+        t.Currency,
+        t.Description,
+        t.CategoryId,
+        t.CategoryName,
+        t.CategoryEmoji,
+        t.IsCategoryManual,
+        IsFuture = IsFuture(t),
+    };
 
     // A calendar period: a whole year, or one month of it when month is given. Returns the
     // half-open range [from, to) plus how many month buckets it spans, so callers can build a
@@ -76,9 +98,18 @@ public static class TransactionEndpoints
 
         var userId = currentUser.GetRequiredUserId();
 
-        var items = await transactions.GetForPeriodAsync(userId, accountIds, from, to, ct);
+        var allItems = await transactions.GetForPeriodAsync(userId, accountIds, from, to, ct);
         var availableYears = await transactions.GetAvailableYearsAsync(userId, accountIds, ct);
-        var netBalance = await transactions.GetNetBalanceAsync(userId, accountIds, ct);
+        // asOf: a payment scheduled for next week hasn't left the account, so it shouldn't be in
+        // the balance either — the figure describes money that has actually moved.
+        var netBalance = await transactions.GetNetBalanceAsync(userId, accountIds, Today, ct);
+
+        // Scheduled payments are dated in the future and haven't happened yet; counting them would
+        // report spending that may still be cancelled, and would make the current month look worse
+        // than it is. Dropped before any aggregation, including transfer pairing — a future leg
+        // has no settled counterpart to net against.
+        var items = allItems.Where(t => !IsFuture(t)).ToList();
+        var futureCount = allItems.Count - items.Count;
 
         // Matched transfers are dropped from income, expenses and category spending: both legs are
         // in view, they cancel out, and counting them would inflate both sides by the same amount
@@ -120,6 +151,7 @@ public static class TransactionEndpoints
             monthlyFlow,
             categoryBreakdown = CategoryBreakdown(spending),
             excludedTransfers = transferCount,
+            excludedFuture = futureCount,
             kpis = new
             {
                 avgMonthlyIncome = avgIncome,
@@ -146,9 +178,11 @@ public static class TransactionEndpoints
         var (from, to, _) = ResolvePeriod(year, month);
 
         var userId = currentUser.GetRequiredUserId();
-        var items = await transactions.GetForPeriodAsync(userId, accountIds, from, to, ct);
+        var allItems = await transactions.GetForPeriodAsync(userId, accountIds, from, to, ct);
 
-        var matching = ExcludingInternalTransfers(items)
+        // Same exclusions as the dashboard, in the same order, so this reconciles with the bar.
+        var settled = allItems.Where(t => !IsFuture(t)).ToList();
+        var matching = ExcludingInternalTransfers(settled)
             .Where(t => t.Amount < 0 && t.CategoryId == categoryId)
             .OrderByDescending(t => t.BookingDate)
             .ToList();
@@ -159,18 +193,7 @@ public static class TransactionEndpoints
             from,
             to,
             total = matching.Sum(t => -t.Amount),
-            items = matching.Select(t => new
-            {
-                t.Id,
-                t.BankAccountId,
-                t.BookingDate,
-                t.Amount,
-                t.Currency,
-                t.Description,
-                t.CategoryId,
-                t.CategoryName,
-                t.CategoryEmoji,
-            }),
+            items = matching.Select(WithFutureFlag),
         });
     }
 

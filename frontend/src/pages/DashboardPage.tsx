@@ -365,7 +365,13 @@ export function DashboardPage() {
             </div>
 
             {/* Transactions */}
-            <Section title="📋 Transactions">
+            <Section
+              title={
+                dashboard && dashboard.excludedFuture > 0
+                  ? `📋 Transactions — ${dashboard.excludedFuture} scheduled, not counted`
+                  : '📋 Transactions'
+              }
+            >
               {txLoading ? (
                 <Spinner />
               ) : txPage && txPage.items.length > 0 ? (
@@ -382,9 +388,22 @@ export function DashboardPage() {
                     </thead>
                     <tbody>
                       {txPage.items.map((tx) => (
-                        <tr key={tx.id} className="border-b border-[#1e2535] last:border-none hover:bg-white/[0.02]">
+                        <tr
+                          key={tx.id}
+                          className={`border-b border-[#1e2535] last:border-none hover:bg-white/[0.02] ${tx.isFuture ? 'opacity-60' : ''}`}
+                        >
                           <td className="py-2 pr-3 whitespace-nowrap text-slate-500">{tx.bookingDate}</td>
-                          <td className="py-2 pr-3 text-slate-300">{tx.description}</td>
+                          <td className="py-2 pr-3 text-slate-300">
+                            {tx.description}
+                            {tx.isFuture && (
+                              <span
+                                className="ml-2 rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 align-middle text-[0.62rem] font-medium uppercase tracking-wide text-amber-400"
+                                title="Scheduled by the bank for a future date — not counted in any total"
+                              >
+                                Scheduled
+                              </span>
+                            )}
+                          </td>
                           <td className="py-2 pr-3 whitespace-nowrap text-slate-500">{accountNameById.get(tx.bankAccountId) ?? '—'}</td>
                           <td className="py-2 pr-3">
                             <CategoryPicker

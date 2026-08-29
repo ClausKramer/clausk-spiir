@@ -11,6 +11,8 @@ export interface Transaction {
   categoryName: string | null
   categoryEmoji: string | null
   isCategoryManual: boolean
+  // Bank-reported payment dated in the future — shown, but left out of every total.
+  isFuture: boolean
 }
 
 export interface TransactionPage {
@@ -116,6 +118,7 @@ export interface DashboardData {
   monthlyFlow: MonthlyFlow[]
   categoryBreakdown: SpendingRow[]
   excludedTransfers: number
+  excludedFuture: number
   kpis: {
     avgMonthlyIncome: number
     avgMonthlyExpense: number

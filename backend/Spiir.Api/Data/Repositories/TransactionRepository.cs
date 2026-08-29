@@ -94,13 +94,17 @@ public class TransactionRepository(IDbConnectionFactory connectionFactory)
         return (items.AsList(), total);
     }
 
-    public async Task<decimal> GetNetBalanceAsync(Guid userId, IReadOnlyList<Guid>? accountIds, CancellationToken ct = default)
+    // asOf excludes bank-reported scheduled payments dated after it — they haven't moved any money
+    // yet, so including them would misstate what's actually in the accounts.
+    public async Task<decimal> GetNetBalanceAsync(
+        Guid userId, IReadOnlyList<Guid>? accountIds, DateOnly? asOf = null, CancellationToken ct = default)
     {
         using var conn = await connectionFactory.CreateOpenConnectionAsync(ct);
         var filter = AccountFilterClause(accountIds);
+        var asOfFilter = asOf.HasValue ? "AND t.BookingDate <= @asOf" : "";
         return await conn.ExecuteScalarAsync<decimal>(
-            $"SELECT ISNULL(SUM(t.Amount), 0) FROM Transactions t WHERE t.UserId = @userId {filter}",
-            new { userId, accountIds });
+            $"SELECT ISNULL(SUM(t.Amount), 0) FROM Transactions t WHERE t.UserId = @userId {filter} {asOfFilter}",
+            new { userId, accountIds, asOf });
     }
 
     public async Task<bool> SetCategoryAsync(Guid userId, Guid transactionId, Guid? categoryId, CancellationToken ct = default)

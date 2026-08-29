@@ -63,9 +63,19 @@ export function AccountTransactionsPage() {
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {txPage.items.map((tx) => (
-                    <tr key={tx.id} className="hover:bg-slate-50">
+                    <tr key={tx.id} className={`hover:bg-slate-50 ${tx.isFuture ? 'opacity-60' : ''}`}>
                       <td className="px-5 py-2.5 whitespace-nowrap text-slate-500">{tx.bookingDate}</td>
-                      <td className="px-5 py-2.5 text-slate-800">{tx.description}</td>
+                      <td className="px-5 py-2.5 text-slate-800">
+                        {tx.description}
+                        {tx.isFuture && (
+                          <span
+                            className="ml-2 rounded-full border border-amber-300 bg-amber-50 px-1.5 py-0.5 align-middle text-[0.62rem] font-medium uppercase tracking-wide text-amber-700"
+                            title="Scheduled by the bank for a future date — not counted in any total"
+                          >
+                            Scheduled
+                          </span>
+                        )}
+                      </td>
                       <td className="px-5 py-2.5">
                         <CategoryPicker
                           transactionId={tx.id}

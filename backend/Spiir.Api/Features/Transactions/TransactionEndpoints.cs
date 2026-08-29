@@ -53,9 +53,10 @@ public static class TransactionEndpoints
         var to = from.AddMonths(1);
 
         var userId = currentUser.GetRequiredUserId();
-        var rows = await transactions.GetCategoryBreakdownAsync(userId, null, from, to, ct);
+        var items = await transactions.GetForPeriodAsync(userId, null, from, to, ct);
+        var spending = ExcludingInternalTransfers(items);
 
-        return TypedResults.Ok(new { year = targetYear, month = targetMonth, categories = rows });
+        return TypedResults.Ok(new { year = targetYear, month = targetMonth, categories = CategoryBreakdown(spending) });
     }
 
     private static async Task<IResult> GetDashboard(
@@ -73,17 +74,31 @@ public static class TransactionEndpoints
 
         var userId = currentUser.GetRequiredUserId();
 
-        var flow = await transactions.GetMonthlyFlowAsync(userId, accountIds, from, to, ct);
-        var categories = await transactions.GetCategoryBreakdownAsync(userId, accountIds, from, to, ct);
+        var items = await transactions.GetForPeriodAsync(userId, accountIds, from, to, ct);
         var netBalance = await transactions.GetNetBalanceAsync(userId, accountIds, ct);
 
+        // Matched transfers are dropped from income, expenses and category spending: both legs are
+        // in view, they cancel out, and counting them would inflate both sides by the same amount
+        // while describing no real money in or out. Net balance deliberately keeps them — it
+        // reflects what's actually sitting in the accounts, and a matched pair already sums to zero.
+        var spending = ExcludingInternalTransfers(items);
+        var transferCount = items.Count - spending.Count;
+
+        var byMonth = spending
+            .GroupBy(t => (t.BookingDate.Year, t.BookingDate.Month))
+            .ToDictionary(
+                g => g.Key,
+                g => (Income: g.Where(t => t.Amount > 0).Sum(t => t.Amount),
+                      Expense: g.Where(t => t.Amount < 0).Sum(t => -t.Amount)));
+
         // Fill in months with no transactions so the flow grid always shows exactly `months` cards.
-        var byKey = flow.ToDictionary(r => (r.Year, r.Month));
         var monthlyFlow = Enumerable.Range(0, months)
             .Select(i => from.AddMonths(i))
-            .Select(d => byKey.TryGetValue((d.Year, d.Month), out var row)
-                ? new { row.Year, row.Month, row.Income, row.Expense, Net = row.Income - row.Expense }
-                : new { Year = d.Year, Month = d.Month, Income = 0m, Expense = 0m, Net = 0m })
+            .Select(d =>
+            {
+                byMonth.TryGetValue((d.Year, d.Month), out var row);
+                return new { d.Year, d.Month, row.Income, row.Expense, Net = row.Income - row.Expense };
+            })
             .ToList();
 
         var avgIncome = monthlyFlow.Count > 0 ? monthlyFlow.Average(m => m.Income) : 0m;
@@ -95,7 +110,8 @@ public static class TransactionEndpoints
             to,
             months,
             monthlyFlow,
-            categoryBreakdown = categories,
+            categoryBreakdown = CategoryBreakdown(spending),
+            excludedTransfers = transferCount,
             kpis = new
             {
                 avgMonthlyIncome = avgIncome,
@@ -105,6 +121,20 @@ public static class TransactionEndpoints
             },
         });
     }
+
+    private static List<TransactionListItem> ExcludingInternalTransfers(IReadOnlyList<TransactionListItem> items)
+    {
+        var paired = InternalTransferDetector.FindPairedIds(items);
+        return items.Where(t => !paired.Contains(t.Id)).ToList();
+    }
+
+    private static List<MonthlySummaryRow> CategoryBreakdown(IReadOnlyList<TransactionListItem> items) =>
+        items
+            .Where(t => t.Amount < 0)
+            .GroupBy(t => (t.CategoryId, t.CategoryName, t.CategoryEmoji))
+            .Select(g => new MonthlySummaryRow(g.Key.CategoryId, g.Key.CategoryName, g.Key.CategoryEmoji, g.Sum(t => -t.Amount)))
+            .OrderByDescending(r => r.Total)
+            .ToList();
 
     // Re-runs categorization over transactions already stored, which sync never revisits (it only
     // categorizes what it just fetched). Needed whenever the rules change underneath existing

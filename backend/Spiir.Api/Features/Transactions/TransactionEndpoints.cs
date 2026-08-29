@@ -11,7 +11,6 @@ public static class TransactionEndpoints
         var group = app.MapGroup("/transactions").WithTags("Transactions").RequireAuthorization();
 
         group.MapGet("/", GetTransactions);
-        group.MapGet("/summary", GetMonthlySummary);
         group.MapGet("/dashboard", GetDashboard);
         group.MapGet("/by-category", GetByCategory);
         group.MapPost("/recategorize", Recategorize);
@@ -28,54 +27,57 @@ public static class TransactionEndpoints
         int page = 1,
         int pageSize = 50,
         Guid[]? accountIds = null,
+        int? year = null,
+        int? month = null,
         CancellationToken ct = default)
     {
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 200);
 
+        // year is optional here, unlike on the dashboard: the per-account transaction list wants
+        // everything ever recorded, while the dashboard always scopes to a chosen period.
+        var (from, to) = year is null ? (default(DateOnly?), default(DateOnly?)) : ResolvePeriod(year, month) switch
+        {
+            var p => ((DateOnly?)p.From, (DateOnly?)p.To),
+        };
+
         var userId = currentUser.GetRequiredUserId();
-        var (items, total) = await transactions.GetPageAsync(userId, page, pageSize, accountIds, ct);
+        var (items, total) = await transactions.GetPageAsync(userId, page, pageSize, accountIds, from, to, ct);
 
         return TypedResults.Ok(new { items, totalCount = total, page, pageSize });
     }
 
-    private static async Task<IResult> GetMonthlySummary(
-        TransactionRepository transactions,
-        ICurrentUser currentUser,
-        int? year = null,
-        int? month = null,
-        CancellationToken ct = default)
+    // A calendar period: a whole year, or one month of it when month is given. Returns the
+    // half-open range [from, to) plus how many month buckets it spans, so callers can build a
+    // complete flow grid including months with no transactions.
+    private static (DateOnly From, DateOnly To, int MonthCount) ResolvePeriod(int? year, int? month)
     {
-        var now = DateTime.UtcNow;
-        var targetYear = year ?? now.Year;
-        var targetMonth = month ?? now.Month;
+        var targetYear = year ?? DateTime.UtcNow.Year;
 
-        var from = new DateOnly(targetYear, targetMonth, 1);
-        var to = from.AddMonths(1);
+        if (month is >= 1 and <= 12)
+        {
+            var start = new DateOnly(targetYear, month.Value, 1);
+            return (start, start.AddMonths(1), 1);
+        }
 
-        var userId = currentUser.GetRequiredUserId();
-        var items = await transactions.GetForPeriodAsync(userId, null, from, to, ct);
-        var spending = ExcludingInternalTransfers(items);
-
-        return TypedResults.Ok(new { year = targetYear, month = targetMonth, categories = CategoryBreakdown(spending) });
+        var yearStart = new DateOnly(targetYear, 1, 1);
+        return (yearStart, yearStart.AddYears(1), 12);
     }
 
     private static async Task<IResult> GetDashboard(
         TransactionRepository transactions,
         ICurrentUser currentUser,
         Guid[]? accountIds = null,
-        int months = 6,
+        int? year = null,
+        int? month = null,
         CancellationToken ct = default)
     {
-        months = Math.Clamp(months, 1, 24);
-
-        var now = DateOnly.FromDateTime(DateTime.UtcNow);
-        var to = new DateOnly(now.Year, now.Month, 1).AddMonths(1);
-        var from = to.AddMonths(-months);
+        var (from, to, months) = ResolvePeriod(year, month);
 
         var userId = currentUser.GetRequiredUserId();
 
         var items = await transactions.GetForPeriodAsync(userId, accountIds, from, to, ct);
+        var availableYears = await transactions.GetAvailableYearsAsync(userId, accountIds, ct);
         var netBalance = await transactions.GetNetBalanceAsync(userId, accountIds, ct);
 
         // Matched transfers are dropped from income, expenses and category spending: both legs are
@@ -109,7 +111,12 @@ public static class TransactionEndpoints
         {
             from,
             to,
+            year = from.Year,
+            month,
             months,
+            // Always includes the selected year even if it has no transactions yet, so the picker
+            // can't end up unable to represent its own current selection.
+            availableYears = availableYears.Append(from.Year).Distinct().OrderDescending().ToList(),
             monthlyFlow,
             categoryBreakdown = CategoryBreakdown(spending),
             excludedTransfers = transferCount,
@@ -124,22 +131,19 @@ public static class TransactionEndpoints
     }
 
     // The transactions making up one bar of the dashboard's category breakdown. Deliberately takes
-    // the same accountIds/months as the dashboard and applies the same transfer exclusion, so the
-    // rows shown always add up to the total the user clicked — a drill-down that didn't reconcile
-    // would be worse than none.
+    // the same accountIds and period as the dashboard and applies the same transfer exclusion, so
+    // the rows shown always add up to the total the user clicked — a drill-down that didn't
+    // reconcile would be worse than none.
     private static async Task<IResult> GetByCategory(
         TransactionRepository transactions,
         ICurrentUser currentUser,
         Guid? categoryId = null,
         Guid[]? accountIds = null,
-        int months = 6,
+        int? year = null,
+        int? month = null,
         CancellationToken ct = default)
     {
-        months = Math.Clamp(months, 1, 24);
-
-        var now = DateOnly.FromDateTime(DateTime.UtcNow);
-        var to = new DateOnly(now.Year, now.Month, 1).AddMonths(1);
-        var from = to.AddMonths(-months);
+        var (from, to, _) = ResolvePeriod(year, month);
 
         var userId = currentUser.GetRequiredUserId();
         var items = await transactions.GetForPeriodAsync(userId, accountIds, from, to, ct);

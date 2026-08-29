@@ -1,12 +1,14 @@
 import { useQuery } from '@tanstack/react-query'
-import { getTransactionsByCategory } from '../api/transactions'
+import { getTransactionsByCategory, type Period } from '../api/transactions'
 import { CategoryPicker } from './CategoryPicker'
+
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
 interface Props {
   categoryId: string | null
   categoryLabel: string
   accountIds: string[]
-  months: number
+  period: Period
   accountNameById: Map<string, string>
   onClose: () => void
 }
@@ -19,14 +21,18 @@ export function CategoryTransactionsDialog({
   categoryId,
   categoryLabel,
   accountIds,
-  months,
+  period,
   accountNameById,
   onClose,
 }: Props) {
   const { data, isLoading } = useQuery({
-    queryKey: ['by-category', categoryId, accountIds, months],
-    queryFn: () => getTransactionsByCategory(categoryId, accountIds, months),
+    queryKey: ['by-category', categoryId, accountIds, period],
+    queryFn: () => getTransactionsByCategory(categoryId, accountIds, period),
   })
+
+  const periodLabel = period.month === null
+    ? String(period.year)
+    : `${MONTH_NAMES[period.month - 1]} ${period.year}`
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
@@ -39,7 +45,7 @@ export function CategoryTransactionsDialog({
             <h2 className="text-base font-semibold text-slate-100">{categoryLabel}</h2>
             <p className="mt-0.5 text-xs text-slate-500">
               {data
-                ? `${data.items.length} transaction${data.items.length === 1 ? '' : 's'} · ${dkk(data.total)} over the last ${months} months`
+                ? `${data.items.length} transaction${data.items.length === 1 ? '' : 's'} · ${dkk(data.total)} · ${periodLabel}`
                 : 'Loading…'}
             </p>
           </div>

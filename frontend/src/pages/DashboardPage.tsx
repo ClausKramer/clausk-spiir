@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { useMe, useLogout } from '../hooks/useAuth'
-import { getTransactions, getDashboard, recategorize } from '../api/transactions'
+import { getTransactions, getDashboard, recategorize, type Period } from '../api/transactions'
 import { getBankAccounts, syncAll } from '../api/accounts'
 import { syncDefaultCategories, clearLearnedRules } from '../api/categories'
 import { CategoryPicker } from '../components/CategoryPicker'
@@ -86,16 +86,23 @@ export function DashboardPage() {
     })
   }
 
+  // Defaults to the whole current year, per the picker's own defaults.
+  const [period, setPeriod] = useState<Period>({ year: new Date().getFullYear(), month: null })
+
   const { data: dashboard, isLoading: dashboardLoading } = useQuery({
-    queryKey: ['dashboard', accountIdsParam],
-    queryFn: () => getDashboard(accountIdsParam, 6),
+    queryKey: ['dashboard', accountIdsParam, period],
+    queryFn: () => getDashboard(accountIdsParam, period),
     enabled: !noneSelected,
+    // Keeps the previous period's numbers on screen while the next load runs, so switching
+    // month doesn't blank the whole dashboard.
+    placeholderData: (prev) => prev,
   })
 
   const { data: txPage, isLoading: txLoading } = useQuery({
-    queryKey: ['transactions', 1, accountIdsParam],
-    queryFn: () => getTransactions(1, 50, accountIdsParam),
+    queryKey: ['transactions', 1, accountIdsParam, period],
+    queryFn: () => getTransactions(1, 50, accountIdsParam, period),
     enabled: !noneSelected,
+    placeholderData: (prev) => prev,
   })
 
   const categoryRows = dashboard?.categoryBreakdown.filter((r) => r.total > 0) ?? []
@@ -107,6 +114,13 @@ export function DashboardPage() {
   // Which category bar the user drilled into. Held as an object rather than just the id because
   // the id is null for uncategorized, which wouldn't distinguish "closed" from "uncategorized".
   const [openCategory, setOpenCategory] = useState<{ id: string | null; label: string } | null>(null)
+
+  // Years with data, from the server, plus the current year so "this year" is always selectable
+  // even before any transaction lands in it.
+  const yearOptions = [...new Set([...(dashboard?.availableYears ?? []), new Date().getFullYear(), period.year])]
+    .sort((a, b) => b - a)
+
+  const periodLabel = period.month === null ? String(period.year) : `${MONTH_NAMES[period.month - 1]} ${period.year}`
 
   const kpis = dashboard?.kpis
   const netBalancePositive = (kpis?.netBalance ?? 0) >= 0
@@ -181,6 +195,32 @@ export function DashboardPage() {
           </div>
         )}
 
+        {/* Period */}
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <span className="mr-1 text-[0.7rem] uppercase tracking-wider text-slate-500">Period</span>
+          <select
+            value={period.year}
+            onChange={(e) => setPeriod((p) => ({ ...p, year: Number(e.target.value) }))}
+            className="rounded-lg border border-slate-700 bg-[#1a1f2e] px-2.5 py-1 text-xs font-medium text-slate-200 outline-none focus:border-indigo-500"
+            aria-label="Year"
+          >
+            {yearOptions.map((y) => (
+              <option key={y} value={y}>{y}</option>
+            ))}
+          </select>
+          <select
+            value={period.month ?? ''}
+            onChange={(e) => setPeriod((p) => ({ ...p, month: e.target.value === '' ? null : Number(e.target.value) }))}
+            className="rounded-lg border border-slate-700 bg-[#1a1f2e] px-2.5 py-1 text-xs font-medium text-slate-200 outline-none focus:border-indigo-500"
+            aria-label="Month"
+          >
+            <option value="">All year</option>
+            {MONTH_NAMES.map((name, i) => (
+              <option key={name} value={i + 1}>{name}</option>
+            ))}
+          </select>
+        </div>
+
         {/* Account filter */}
         {accounts.length > 0 && (
           <div className="mb-6 flex flex-wrap items-center gap-2">
@@ -243,7 +283,7 @@ export function DashboardPage() {
             </div>
 
             {/* Monthly flow */}
-            <Section title="📅 Monthly cash flow">
+            <Section title={`📅 Monthly cash flow — ${periodLabel}`}>
               {dashboardLoading ? (
                 <Spinner />
               ) : (
@@ -265,7 +305,7 @@ export function DashboardPage() {
 
             <div className="mb-5 grid grid-cols-1 lg:grid-cols-2 gap-4">
               {/* Category breakdown */}
-              <Section title="📊 Spending by category (period total)">
+              <Section title={`📊 Spending by category — ${periodLabel}`}>
                 {dashboardLoading ? (
                   <Spinner />
                 ) : categoryRows.length === 0 ? (
@@ -379,7 +419,7 @@ export function DashboardPage() {
             categoryId={openCategory.id}
             categoryLabel={openCategory.label}
             accountIds={accountIdsParam}
-            months={6}
+            period={period}
             accountNameById={accountNameById}
             onClose={() => setOpenCategory(null)}
           />

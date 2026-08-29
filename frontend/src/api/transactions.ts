@@ -20,11 +20,21 @@ export interface TransactionPage {
   pageSize: number
 }
 
-export async function getTransactions(page = 1, pageSize = 50, accountIds: string[] = []): Promise<TransactionPage> {
+// period is optional: the dashboard scopes to its selection, the per-account list shows everything.
+export async function getTransactions(
+  page = 1,
+  pageSize = 50,
+  accountIds: string[] = [],
+  period?: Period,
+): Promise<TransactionPage> {
   const params = new URLSearchParams()
   params.set('page', String(page))
   params.set('pageSize', String(pageSize))
   accountIds.forEach((id) => params.append('accountIds', id))
+  if (period) {
+    params.set('year', String(period.year))
+    if (period.month !== null) params.set('month', String(period.month))
+  }
   const { data } = await client.get('/transactions', { params })
   return data
 }
@@ -74,15 +84,18 @@ export interface SpendingRow {
   total: number
 }
 
-export interface MonthlySummary {
+// The dashboard's period: a calendar year, or one month of it when month is set.
+export interface Period {
   year: number
-  month: number
-  categories: SpendingRow[]
+  month: number | null
 }
 
-export async function getMonthlySummary(year?: number, month?: number): Promise<MonthlySummary> {
-  const { data } = await client.get('/transactions/summary', { params: { year, month } })
-  return data
+function periodParams(period: Period, accountIds: string[]): URLSearchParams {
+  const params = new URLSearchParams()
+  params.set('year', String(period.year))
+  if (period.month !== null) params.set('month', String(period.month))
+  accountIds.forEach((id) => params.append('accountIds', id))
+  return params
 }
 
 export interface MonthlyFlow {
@@ -96,9 +109,13 @@ export interface MonthlyFlow {
 export interface DashboardData {
   from: string
   to: string
+  year: number
+  month: number | null
   months: number
+  availableYears: number[]
   monthlyFlow: MonthlyFlow[]
   categoryBreakdown: SpendingRow[]
+  excludedTransfers: number
   kpis: {
     avgMonthlyIncome: number
     avgMonthlyExpense: number
@@ -130,21 +147,18 @@ export interface CategoryTransactions {
 
 export async function getTransactionsByCategory(
   categoryId: string | null,
-  accountIds: string[] = [],
-  months = 6,
+  accountIds: string[],
+  period: Period,
 ): Promise<CategoryTransactions> {
-  const params = new URLSearchParams()
-  params.set('months', String(months))
+  const params = periodParams(period, accountIds)
   if (categoryId) params.set('categoryId', categoryId)
-  accountIds.forEach((id) => params.append('accountIds', id))
   const { data } = await client.get('/transactions/by-category', { params })
   return data
 }
 
-export async function getDashboard(accountIds: string[] = [], months = 6): Promise<DashboardData> {
-  const params = new URLSearchParams()
-  params.set('months', String(months))
-  accountIds.forEach((id) => params.append('accountIds', id))
-  const { data } = await client.get('/transactions/dashboard', { params })
+export async function getDashboard(accountIds: string[], period: Period): Promise<DashboardData> {
+  const { data } = await client.get('/transactions/dashboard', {
+    params: periodParams(period, accountIds),
+  })
   return data
 }

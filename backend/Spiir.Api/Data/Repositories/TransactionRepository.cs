@@ -26,6 +26,23 @@ public class TransactionRepository(IDbConnectionFactory connectionFactory)
     private static string AccountFilterClause(IReadOnlyList<Guid>? accountIds) =>
         accountIds is { Count: > 0 } ? "AND t.BankAccountId IN @accountIds" : "";
 
+    // Years the user actually has transactions in, so the dashboard's year picker only offers
+    // years with something to show.
+    public async Task<IReadOnlyList<int>> GetAvailableYearsAsync(
+        Guid userId, IReadOnlyList<Guid>? accountIds, CancellationToken ct = default)
+    {
+        using var conn = await connectionFactory.CreateOpenConnectionAsync(ct);
+        var filter = AccountFilterClause(accountIds);
+        var rows = await conn.QueryAsync<int>(
+            $"""
+            SELECT DISTINCT YEAR(t.BookingDate) FROM Transactions t
+            WHERE t.UserId = @userId {filter}
+            ORDER BY 1 DESC
+            """,
+            new { userId, accountIds });
+        return rows.AsList();
+    }
+
     // Transactions in a period, for the accounts in view. The dashboard aggregates these in memory
     // rather than in SQL because internal transfers have to be paired one-to-one before they can
     // be excluded (see InternalTransferDetector), which set-based SQL can't express cleanly.
@@ -46,15 +63,21 @@ public class TransactionRepository(IDbConnectionFactory connectionFactory)
         return rows.AsList();
     }
 
+    // from/to are optional: the dashboard scopes to its selected period, while the per-account
+    // list shows everything on record.
     public async Task<(IReadOnlyList<TransactionListItem> Items, int TotalCount)> GetPageAsync(
-        Guid userId, int page, int pageSize, IReadOnlyList<Guid>? accountIds, CancellationToken ct = default)
+        Guid userId, int page, int pageSize, IReadOnlyList<Guid>? accountIds,
+        DateOnly? from = null, DateOnly? to = null, CancellationToken ct = default)
     {
         using var conn = await connectionFactory.CreateOpenConnectionAsync(ct);
         var filter = AccountFilterClause(accountIds);
+        var periodFilter = from.HasValue && to.HasValue
+            ? "AND t.BookingDate >= @from AND t.BookingDate < @to"
+            : "";
 
         var total = await conn.ExecuteScalarAsync<int>(
-            $"SELECT COUNT(*) FROM Transactions t WHERE t.UserId = @userId {filter}",
-            new { userId, accountIds });
+            $"SELECT COUNT(*) FROM Transactions t WHERE t.UserId = @userId {filter} {periodFilter}",
+            new { userId, accountIds, from, to });
 
         var items = await conn.QueryAsync<TransactionListItem>(
             $"""
@@ -62,11 +85,11 @@ public class TransactionRepository(IDbConnectionFactory connectionFactory)
                    t.CategoryId, c.Name AS CategoryName, c.Emoji AS CategoryEmoji, t.IsCategoryManual
             FROM Transactions t
             LEFT JOIN Categories c ON c.Id = t.CategoryId
-            WHERE t.UserId = @userId {filter}
+            WHERE t.UserId = @userId {filter} {periodFilter}
             ORDER BY t.BookingDate DESC, t.CreatedAt DESC, t.Id DESC
             OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY
             """,
-            new { userId, accountIds, offset = (page - 1) * pageSize, pageSize });
+            new { userId, accountIds, from, to, offset = (page - 1) * pageSize, pageSize });
 
         return (items.AsList(), total);
     }

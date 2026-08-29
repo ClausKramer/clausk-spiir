@@ -44,7 +44,23 @@ public static class TransactionEndpoints
         var userId = currentUser.GetRequiredUserId();
         var (items, total) = await transactions.GetPageAsync(userId, page, pageSize, accountIds, from, to, ct);
 
-        return TypedResults.Ok(new { items = items.Select(WithFutureFlag), totalCount = total, page, pageSize });
+        // Which rows the dashboard's totals left out as matched internal transfers. Computed over
+        // the whole period rather than the current page — pairing depends on the counterpart being
+        // in scope, and it usually isn't on the same page. Skipped without a period: that's the
+        // per-account list, where a single account can't pair against itself anyway.
+        var paired = from.HasValue && to.HasValue
+            ? InternalTransferDetector.FindPairedIds(
+                (await transactions.GetForPeriodAsync(userId, accountIds, from.Value, to.Value, ct))
+                    .Where(t => !IsFuture(t)).ToList())
+            : [];
+
+        return TypedResults.Ok(new
+        {
+            items = items.Select(t => WithFlags(t, paired.Contains(t.Id))),
+            totalCount = total,
+            page,
+            pageSize,
+        });
     }
 
     // Banks report scheduled payments alongside settled ones, dated when they will happen. They
@@ -54,7 +70,12 @@ public static class TransactionEndpoints
 
     private static bool IsFuture(TransactionListItem t) => t.BookingDate > Today;
 
-    private static object WithFutureFlag(TransactionListItem t) => new
+    private static object WithFutureFlag(TransactionListItem t) => WithFlags(t, isTransfer: false);
+
+    // isTransfer marks a row the totals deliberately left out because it paired against an
+    // opposite leg in another of the user's accounts. Surfaced so an excluded row is visibly
+    // excluded — otherwise it's indistinguishable from one the matching simply missed.
+    private static object WithFlags(TransactionListItem t, bool isTransfer) => new
     {
         t.Id,
         t.BankAccountId,
@@ -67,6 +88,7 @@ public static class TransactionEndpoints
         t.CategoryEmoji,
         t.IsCategoryManual,
         IsFuture = IsFuture(t),
+        IsTransfer = isTransfer,
     };
 
     // A calendar period: a whole year, or one month of it when month is given. Returns the

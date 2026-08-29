@@ -366,11 +366,12 @@ export function DashboardPage() {
 
             {/* Transactions */}
             <Section
-              title={
-                dashboard && dashboard.excludedFuture > 0
-                  ? `📋 Transactions — ${dashboard.excludedFuture} scheduled, not counted`
-                  : '📋 Transactions'
-              }
+              title={(() => {
+                const notes = []
+                if (dashboard?.excludedTransfers) notes.push(`${dashboard.excludedTransfers} transfer`)
+                if (dashboard?.excludedFuture) notes.push(`${dashboard.excludedFuture} scheduled`)
+                return notes.length > 0 ? `📋 Transactions — ${notes.join(', ')} not counted` : '📋 Transactions'
+              })()}
             >
               {txLoading ? (
                 <Spinner />
@@ -390,7 +391,7 @@ export function DashboardPage() {
                       {txPage.items.map((tx) => (
                         <tr
                           key={tx.id}
-                          className={`border-b border-[#1e2535] last:border-none hover:bg-white/[0.02] ${tx.isFuture ? 'opacity-60' : ''}`}
+                          className={`border-b border-[#1e2535] last:border-none hover:bg-white/[0.02] ${tx.isFuture || tx.isTransfer ? 'opacity-60' : ''}`}
                         >
                           <td className="py-2 pr-3 whitespace-nowrap text-slate-500">{tx.bookingDate}</td>
                           <td className="py-2 pr-3 text-slate-300">
@@ -401,6 +402,14 @@ export function DashboardPage() {
                                 title="Scheduled by the bank for a future date — not counted in any total"
                               >
                                 Scheduled
+                              </span>
+                            )}
+                            {tx.isTransfer && (
+                              <span
+                                className="ml-2 rounded-full border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 align-middle text-[0.62rem] font-medium uppercase tracking-wide text-sky-400"
+                                title="Matched against the opposite leg in another of your accounts — not counted as income or spending"
+                              >
+                                Transfer
                               </span>
                             )}
                           </td>

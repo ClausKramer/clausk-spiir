@@ -13,6 +13,8 @@ export interface Transaction {
   isCategoryManual: boolean
   // Bank-reported payment dated in the future — shown, but left out of every total.
   isFuture: boolean
+  // Paired against an opposite leg in another of your accounts, so left out of income/expense.
+  isTransfer: boolean
 }
 
 export interface TransactionPage {

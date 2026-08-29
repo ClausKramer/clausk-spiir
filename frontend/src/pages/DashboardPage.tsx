@@ -7,6 +7,7 @@ import { getBankAccounts, syncAll } from '../api/accounts'
 import { syncDefaultCategories, clearLearnedRules } from '../api/categories'
 import { CategoryPicker } from '../components/CategoryPicker'
 import { CategoryTransactionsDialog } from '../components/CategoryTransactionsDialog'
+import { CashFlowChart } from '../components/CashFlowChart'
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
@@ -117,6 +118,10 @@ export function DashboardPage() {
   // Which category bar the user drilled into. Held as an object rather than just the id because
   // the id is null for uncategorized, which wouldn't distinguish "closed" from "uncategorized".
   const [openCategory, setOpenCategory] = useState<{ id: string | null; label: string } | null>(null)
+
+  // Chart by default for the shape of the year; the cards view doubles as this chart's table
+  // view, so every plotted value stays readable as text.
+  const [flowView, setFlowView] = useState<'chart' | 'cards'>('chart')
 
   // Years with data, from the server, plus the current year so "this year" is always selectable
   // even before any transaction lands in it.
@@ -286,9 +291,29 @@ export function DashboardPage() {
             </div>
 
             {/* Monthly flow */}
-            <Section title={`📅 Monthly cash flow — ${periodLabel}`}>
+            <Section
+              title={`📅 Monthly cash flow — ${periodLabel}`}
+              action={
+                <div className="flex rounded-lg border border-slate-700 p-0.5" role="group" aria-label="Cash flow view">
+                  {(['chart', 'cards'] as const).map((v) => (
+                    <button
+                      key={v}
+                      onClick={() => setFlowView(v)}
+                      aria-pressed={flowView === v}
+                      className={`rounded-md px-2.5 py-1 text-xs font-medium capitalize transition-colors ${
+                        flowView === v ? 'bg-[#232b3b] text-slate-200' : 'text-slate-500 hover:text-slate-300'
+                      }`}
+                    >
+                      {v}
+                    </button>
+                  ))}
+                </div>
+              }
+            >
               {dashboardLoading ? (
                 <Spinner />
+              ) : flowView === 'chart' ? (
+                <CashFlowChart data={dashboard?.monthlyFlow ?? []} />
               ) : (
                 <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
                   {dashboard?.monthlyFlow.map((m) => (
@@ -472,10 +497,13 @@ function Kpi({ label, value, valueClass, sub, loading }: { label: string; value:
   )
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
   return (
     <div className="mb-5 rounded-xl border border-[#232b3b] bg-[#1a1f2e] p-4 md:p-5">
-      <div className="mb-4 text-[0.7rem] font-bold uppercase tracking-wider text-slate-600">{title}</div>
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div className="text-[0.7rem] font-bold uppercase tracking-wider text-slate-600">{title}</div>
+        {action}
+      </div>
       {children}
     </div>
   )

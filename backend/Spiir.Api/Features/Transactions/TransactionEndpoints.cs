@@ -13,6 +13,7 @@ public static class TransactionEndpoints
         group.MapGet("/", GetTransactions);
         group.MapGet("/summary", GetMonthlySummary);
         group.MapGet("/dashboard", GetDashboard);
+        group.MapGet("/by-category", GetByCategory);
         group.MapPost("/recategorize", Recategorize);
         group.MapGet("/similar", GetSimilar);
         group.MapPost("/apply-to-similar", ApplyToSimilar);
@@ -119,6 +120,53 @@ public static class TransactionEndpoints
                 avgMonthlySurplus = avgIncome - avgExpense,
                 netBalance,
             },
+        });
+    }
+
+    // The transactions making up one bar of the dashboard's category breakdown. Deliberately takes
+    // the same accountIds/months as the dashboard and applies the same transfer exclusion, so the
+    // rows shown always add up to the total the user clicked — a drill-down that didn't reconcile
+    // would be worse than none.
+    private static async Task<IResult> GetByCategory(
+        TransactionRepository transactions,
+        ICurrentUser currentUser,
+        Guid? categoryId = null,
+        Guid[]? accountIds = null,
+        int months = 6,
+        CancellationToken ct = default)
+    {
+        months = Math.Clamp(months, 1, 24);
+
+        var now = DateOnly.FromDateTime(DateTime.UtcNow);
+        var to = new DateOnly(now.Year, now.Month, 1).AddMonths(1);
+        var from = to.AddMonths(-months);
+
+        var userId = currentUser.GetRequiredUserId();
+        var items = await transactions.GetForPeriodAsync(userId, accountIds, from, to, ct);
+
+        var matching = ExcludingInternalTransfers(items)
+            .Where(t => t.Amount < 0 && t.CategoryId == categoryId)
+            .OrderByDescending(t => t.BookingDate)
+            .ToList();
+
+        return TypedResults.Ok(new
+        {
+            categoryId,
+            from,
+            to,
+            total = matching.Sum(t => -t.Amount),
+            items = matching.Select(t => new
+            {
+                t.Id,
+                t.BankAccountId,
+                t.BookingDate,
+                t.Amount,
+                t.Currency,
+                t.Description,
+                t.CategoryId,
+                t.CategoryName,
+                t.CategoryEmoji,
+            }),
         });
     }
 

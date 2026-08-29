@@ -120,6 +120,27 @@ export async function recategorize(onlyUncategorized = true): Promise<Recategori
   return data
 }
 
+export interface CategoryTransactions {
+  categoryId: string | null
+  from: string
+  to: string
+  total: number
+  items: Transaction[]
+}
+
+export async function getTransactionsByCategory(
+  categoryId: string | null,
+  accountIds: string[] = [],
+  months = 6,
+): Promise<CategoryTransactions> {
+  const params = new URLSearchParams()
+  params.set('months', String(months))
+  if (categoryId) params.set('categoryId', categoryId)
+  accountIds.forEach((id) => params.append('accountIds', id))
+  const { data } = await client.get('/transactions/by-category', { params })
+  return data
+}
+
 export async function getDashboard(accountIds: string[] = [], months = 6): Promise<DashboardData> {
   const params = new URLSearchParams()
   params.set('months', String(months))

@@ -6,6 +6,7 @@ import { getTransactions, getDashboard, recategorize } from '../api/transactions
 import { getBankAccounts, syncAll } from '../api/accounts'
 import { syncDefaultCategories, clearLearnedRules } from '../api/categories'
 import { CategoryPicker } from '../components/CategoryPicker'
+import { CategoryTransactionsDialog } from '../components/CategoryTransactionsDialog'
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
@@ -102,6 +103,10 @@ export function DashboardPage() {
   const categoryColorByKey = new Map(categoryRows.map((r, i) => [r.categoryId ?? 'none', CATEGORY_COLORS[i % CATEGORY_COLORS.length]]))
 
   const accountNameById = new Map(accounts.map((a) => [a.id, a.name]))
+
+  // Which category bar the user drilled into. Held as an object rather than just the id because
+  // the id is null for uncategorized, which wouldn't distinguish "closed" from "uncategorized".
+  const [openCategory, setOpenCategory] = useState<{ id: string | null; label: string } | null>(null)
 
   const kpis = dashboard?.kpis
   const netBalancePositive = (kpis?.netBalance ?? 0) >= 0
@@ -267,25 +272,33 @@ export function DashboardPage() {
                   <p className="text-center text-sm text-slate-600 py-8">No categorized spending yet.</p>
                 ) : (
                   <div className="space-y-2">
-                    {categoryRows.slice(0, 9).map((row) => (
-                      <div key={row.categoryId ?? 'none'} className="flex items-center gap-2.5">
-                        <div className="w-36 shrink-0 text-right text-xs text-slate-400 truncate">
-                          {row.categoryEmoji && <span className="mr-1">{row.categoryEmoji}</span>}
-                          {row.categoryName ?? 'Uncategorized'}
-                        </div>
-                        <div className="flex-1 h-[22px] rounded bg-[#1e2535] overflow-hidden">
-                          <div
-                            className="h-full rounded flex items-center px-2.5 transition-all duration-500"
-                            style={{
-                              width: `${Math.max((row.total / maxCategory) * 100, 8)}%`,
-                              background: categoryColorByKey.get(row.categoryId ?? 'none'),
-                            }}
-                          >
-                            <span className="text-[0.7rem] font-semibold text-white/90 whitespace-nowrap">{dkk(row.total)}</span>
+                    {categoryRows.slice(0, 9).map((row) => {
+                      const label = `${row.categoryEmoji ?? ''} ${row.categoryName ?? 'Uncategorized'}`.trim()
+                      return (
+                        <button
+                          key={row.categoryId ?? 'none'}
+                          onClick={() => setOpenCategory({ id: row.categoryId, label })}
+                          className="flex w-full items-center gap-2.5 rounded text-left hover:bg-white/[0.03] focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                          title={`Show the ${row.categoryName ?? 'uncategorized'} transactions behind this total`}
+                        >
+                          <div className="w-36 shrink-0 truncate text-right text-xs text-slate-400">
+                            {row.categoryEmoji && <span className="mr-1">{row.categoryEmoji}</span>}
+                            {row.categoryName ?? 'Uncategorized'}
                           </div>
-                        </div>
-                      </div>
-                    ))}
+                          <div className="h-[22px] flex-1 overflow-hidden rounded bg-[#1e2535]">
+                            <div
+                              className="flex h-full items-center rounded px-2.5 transition-all duration-500"
+                              style={{
+                                width: `${Math.max((row.total / maxCategory) * 100, 8)}%`,
+                                background: categoryColorByKey.get(row.categoryId ?? 'none'),
+                              }}
+                            >
+                              <span className="whitespace-nowrap text-[0.7rem] font-semibold text-white/90">{dkk(row.total)}</span>
+                            </div>
+                          </div>
+                        </button>
+                      )
+                    })}
                   </div>
                 )}
               </Section>
@@ -359,6 +372,17 @@ export function DashboardPage() {
               )}
             </Section>
           </>
+        )}
+
+        {openCategory && (
+          <CategoryTransactionsDialog
+            categoryId={openCategory.id}
+            categoryLabel={openCategory.label}
+            accountIds={accountIdsParam}
+            months={6}
+            accountNameById={accountNameById}
+            onClose={() => setOpenCategory(null)}
+          />
         )}
       </div>
     </div>

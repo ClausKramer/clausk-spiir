@@ -15,6 +15,21 @@ export interface Transaction {
   isFuture: boolean
   // Paired against an opposite leg in another of your accounts, so left out of income/expense.
   isTransfer: boolean
+  // Set by hand rather than matched — overrides the automatic detection either way.
+  isManualTransfer: boolean
+}
+
+export async function getCounterpartCandidates(transactionId: string): Promise<{ items: Transaction[] }> {
+  const { data } = await client.get('/transactions/counterpart-candidates', { params: { transactionId } })
+  return data
+}
+
+export async function markTransfer(
+  transactionIds: string[],
+  isTransfer: boolean,
+): Promise<{ updated: number; message: string }> {
+  const { data } = await client.post('/transactions/mark-transfer', { transactionIds, isTransfer })
+  return data
 }
 
 export interface TransactionPage {

@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { useMe, useLogout } from '../hooks/useAuth'
-import { getTransactions, getDashboard, recategorize, type Period } from '../api/transactions'
+import { getTransactions, getDashboard, recategorize, markTransfer, type Period, type Transaction } from '../api/transactions'
+import { MarkTransferDialog } from '../components/MarkTransferDialog'
 import { getBankAccounts, syncAll } from '../api/accounts'
 import { syncDefaultCategories, clearLearnedRules } from '../api/categories'
 import { CategoryPicker } from '../components/CategoryPicker'
@@ -117,6 +118,17 @@ export function DashboardPage() {
   // Chart by default for the shape of the year; the cards view doubles as this chart's table
   // view, so every plotted value stays readable as text.
   const [flowView, setFlowView] = useState<'chart' | 'cards'>('chart')
+
+  const [markingTransfer, setMarkingTransfer] = useState<Transaction | null>(null)
+
+  // Unmarking needs no dialog — there's nothing to choose, and it only ever affects the one row.
+  const { mutate: unmarkTransfer } = useMutation({
+    mutationFn: (id: string) => markTransfer([id], false),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['transactions'] })
+      qc.invalidateQueries({ queryKey: ['dashboard'] })
+    },
+  })
 
   // Carries the dashboard's account filter and period into the category page, so its figures
   // describe the same slice the user clicked from rather than silently widening to everything.
@@ -426,7 +438,7 @@ export function DashboardPage() {
                       {txPage.items.map((tx) => (
                         <tr
                           key={tx.id}
-                          className={`border-b border-[#1e2535] last:border-none hover:bg-white/[0.02] ${tx.isFuture || tx.isTransfer ? 'opacity-60' : ''}`}
+                          className={`group/row border-b border-[#1e2535] last:border-none hover:bg-white/[0.02] ${tx.isFuture || tx.isTransfer ? 'opacity-60' : ''}`}
                         >
                           <td className="py-2 pr-3 whitespace-nowrap text-slate-500">{tx.bookingDate}</td>
                           <td className="py-2 pr-3 text-slate-300">
@@ -440,12 +452,27 @@ export function DashboardPage() {
                               </span>
                             )}
                             {tx.isTransfer && (
-                              <span
-                                className="ml-2 rounded-full border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 align-middle text-[0.62rem] font-medium uppercase tracking-wide text-sky-400"
-                                title="Matched against the opposite leg in another of your accounts — not counted as income or spending"
+                              <button
+                                onClick={() => tx.isManualTransfer && unmarkTransfer(tx.id)}
+                                disabled={!tx.isManualTransfer}
+                                className="ml-2 rounded-full border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 align-middle text-[0.62rem] font-medium uppercase tracking-wide text-sky-400 enabled:hover:bg-sky-500/20"
+                                title={
+                                  tx.isManualTransfer
+                                    ? 'Marked as a transfer by you — click to undo'
+                                    : 'Matched against the opposite leg in another of your accounts — not counted as income or spending'
+                                }
                               >
-                                Transfer
-                              </span>
+                                Transfer{tx.isManualTransfer ? ' ✕' : ''}
+                              </button>
+                            )}
+                            {!tx.isTransfer && (
+                              <button
+                                onClick={() => setMarkingTransfer(tx)}
+                                className="ml-2 align-middle text-[0.62rem] text-slate-700 opacity-0 transition-opacity hover:text-sky-400 group-hover/row:opacity-100"
+                                title="Mark as an internal transfer, so it's left out of income and spending"
+                              >
+                                ⇄
+                              </button>
                             )}
                           </td>
                           <td className="py-2 pr-3 whitespace-nowrap text-slate-500">{accountNameById.get(tx.bankAccountId) ?? '—'}</td>
@@ -477,6 +504,13 @@ export function DashboardPage() {
           </>
         )}
 
+        {markingTransfer && (
+          <MarkTransferDialog
+            transaction={markingTransfer}
+            accountNameById={accountNameById}
+            onClose={() => setMarkingTransfer(null)}
+          />
+        )}
       </div>
     </div>
   )

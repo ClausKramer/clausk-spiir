@@ -13,7 +13,12 @@ namespace Spiir.Api.Features.Transactions;
 // to zero, so only a matched pair should drop out of the totals.
 public static class InternalTransferDetector
 {
-    private const int MaxSettlementDays = 3;
+    // Widened from 3: transfers between different banks routinely take longer than that, and a
+    // weekend or a Danish public holiday pushes a Thursday transfer into the following week. The
+    // amount having to match exactly, on a different account, keeps false pairs unlikely even at
+    // this width. Callers load a matching amount of padding around the period so a transfer that
+    // straddles a month boundary can still find its counterpart.
+    public const int MaxSettlementDays = 7;
 
     /// <summary>
     /// Returns the ids of transactions that pair off against another transaction in the same set.

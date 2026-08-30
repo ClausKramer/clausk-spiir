@@ -16,6 +16,8 @@ public static class TransactionEndpoints
         group.MapPost("/recategorize", Recategorize);
         group.MapGet("/similar", GetSimilar);
         group.MapPost("/apply-to-similar", ApplyToSimilar);
+        group.MapGet("/counterpart-candidates", GetCounterpartCandidates);
+        group.MapPost("/mark-transfer", MarkTransfer);
         group.MapPatch("/{id:guid}/category", SetCategory);
 
         return app;
@@ -54,14 +56,12 @@ public static class TransactionEndpoints
         // in scope, and it usually isn't on the same page. Skipped without a period: that's the
         // per-account list, where a single account can't pair against itself anyway.
         var paired = from.HasValue && to.HasValue
-            ? InternalTransferDetector.FindPairedIds(
-                (await transactions.GetForPeriodAsync(userId, accountIds, from.Value, to.Value, ct))
-                    .Where(t => !IsFuture(t)).ToList())
+            ? (await LoadWithPairingAsync(transactions, userId, accountIds, from.Value, to.Value, ct)).PairedIds
             : [];
 
         return TypedResults.Ok(new
         {
-            items = items.Select(t => WithFlags(t, paired.Contains(t.Id))),
+            items = items.Select(t => WithFlags(t, IsTransfer(t, paired))),
             totalCount = total,
             page,
             pageSize,
@@ -75,7 +75,7 @@ public static class TransactionEndpoints
 
     private static bool IsFuture(TransactionListItem t) => t.BookingDate > Today;
 
-    private static object WithFutureFlag(TransactionListItem t) => WithFlags(t, isTransfer: false);
+    private static object WithFutureFlag(TransactionListItem t) => WithFlags(t, t.IsManualTransfer);
 
     // isTransfer marks a row the totals deliberately left out because it paired against an
     // opposite leg in another of the user's accounts. Surfaced so an excluded row is visibly
@@ -94,6 +94,9 @@ public static class TransactionEndpoints
         t.IsCategoryManual,
         IsFuture = IsFuture(t),
         IsTransfer = isTransfer,
+        // Distinguished from an auto-matched pair so the UI can show that this one was a decision
+        // rather than a guess, and offer to undo it.
+        t.IsManualTransfer,
     };
 
     // A calendar period: a whole year, or one month of it when month is given. Returns the
@@ -125,7 +128,6 @@ public static class TransactionEndpoints
 
         var userId = currentUser.GetRequiredUserId();
 
-        var allItems = await transactions.GetForPeriodAsync(userId, accountIds, from, to, ct);
         var availableYears = await transactions.GetAvailableYearsAsync(userId, accountIds, ct);
         // asOf: a payment scheduled for next week hasn't left the account, so it shouldn't be in
         // the balance either — the figure describes money that has actually moved.
@@ -135,14 +137,15 @@ public static class TransactionEndpoints
         // report spending that may still be cancelled, and would make the current month look worse
         // than it is. Dropped before any aggregation, including transfer pairing — a future leg
         // has no settled counterpart to net against.
-        var items = allItems.Where(t => !IsFuture(t)).ToList();
-        var futureCount = allItems.Count - items.Count;
+        var (items, pairedIds) = await LoadWithPairingAsync(transactions, userId, accountIds, from, to, ct);
+        var allInPeriod = await transactions.GetForPeriodAsync(userId, accountIds, from, to, ct);
+        var futureCount = allInPeriod.Count(IsFuture);
 
         // Matched transfers are dropped from income, expenses and category spending: both legs are
         // in view, they cancel out, and counting them would inflate both sides by the same amount
         // while describing no real money in or out. Net balance deliberately keeps them — it
         // reflects what's actually sitting in the accounts, and a matched pair already sums to zero.
-        var spending = ExcludingInternalTransfers(items);
+        var spending = items.Where(t => !IsTransfer(t, pairedIds)).ToList();
         var transferCount = items.Count - spending.Count;
 
         var byMonth = spending
@@ -205,14 +208,13 @@ public static class TransactionEndpoints
         var (from, to, _) = ResolvePeriod(year, month);
 
         var userId = currentUser.GetRequiredUserId();
-        var allItems = await transactions.GetForPeriodAsync(userId, accountIds, from, to, ct);
 
         // Same exclusions as the dashboard, in the same order, so this reconciles with the bar.
         // Both directions are included: a refund carrying the category belongs to it as much as
         // the purchase did, and netting it off is the only figure that describes what the
         // category actually cost.
-        var settled = allItems.Where(t => !IsFuture(t)).ToList();
-        var nonTransfer = ExcludingInternalTransfers(settled);
+        var (settled, pairedIds) = await LoadWithPairingAsync(transactions, userId, accountIds, from, to, ct);
+        var nonTransfer = settled.Where(t => !IsTransfer(t, pairedIds)).ToList();
         var matching = nonTransfer
             .Where(t => t.CategoryId == categoryId)
             .OrderByDescending(t => t.BookingDate)
@@ -319,10 +321,33 @@ public static class TransactionEndpoints
         });
     }
 
-    private static List<TransactionListItem> ExcludingInternalTransfers(IReadOnlyList<TransactionListItem> items)
+    private static List<TransactionListItem> ExcludingInternalTransfers(IReadOnlyList<TransactionListItem> items) =>
+        items.Where(t => !IsTransfer(t, InternalTransferDetector.FindPairedIds(items))).ToList();
+
+    // A transfer is either one the user marked by hand — which always wins, since they can see a
+    // counterpart the data doesn't contain — or one the matcher paired off.
+    private static bool IsTransfer(TransactionListItem t, HashSet<Guid> pairedIds) =>
+        t.IsManualTransfer || pairedIds.Contains(t.Id);
+
+    // Pairing needs to see beyond the period being aggregated: a transfer sent on the 31st and
+    // received on the 1st has one leg outside any single month, and would otherwise never pair
+    // no matter which month you looked at.
+    private static async Task<(List<TransactionListItem> InPeriod, HashSet<Guid> PairedIds)> LoadWithPairingAsync(
+        TransactionRepository transactions,
+        Guid userId,
+        Guid[]? accountIds,
+        DateOnly from,
+        DateOnly to,
+        CancellationToken ct)
     {
-        var paired = InternalTransferDetector.FindPairedIds(items);
-        return items.Where(t => !paired.Contains(t.Id)).ToList();
+        var pad = InternalTransferDetector.MaxSettlementDays;
+        var padded = await transactions.GetForPeriodAsync(userId, accountIds, from.AddDays(-pad), to.AddDays(pad), ct);
+
+        var settled = padded.Where(t => !IsFuture(t)).ToList();
+        var pairedIds = InternalTransferDetector.FindPairedIds(settled);
+        var inPeriod = settled.Where(t => t.BookingDate >= from && t.BookingDate < to).ToList();
+
+        return (inPeriod, pairedIds);
     }
 
     // Net per category: a refund carrying a category cancels out part of that category's spend,
@@ -371,6 +396,47 @@ public static class TransactionEndpoints
             examined = candidates.Count,
             updated,
             message = $"Recategorized {updated} of {candidates.Count} transaction(s).",
+        });
+    }
+
+    // Possible other legs for a transaction the user is marking as a transfer. Searched over a
+    // wider window than the automatic matcher uses, because here a human confirms the choice —
+    // showing a plausible candidate they can reject beats hiding it and leaving them stuck.
+    private static async Task<IResult> GetCounterpartCandidates(
+        Guid transactionId,
+        TransactionRepository transactions,
+        ICurrentUser currentUser,
+        CancellationToken ct = default)
+    {
+        var userId = currentUser.GetRequiredUserId();
+        var candidates = await transactions.FindCounterpartCandidatesAsync(userId, transactionId, windowDays: 14, ct);
+
+        return TypedResults.Ok(new { items = candidates.Select(WithFutureFlag) });
+    }
+
+    private record MarkTransferRequest(Guid[] TransactionIds, bool IsTransfer);
+
+    // Marks transactions as internal transfers by hand, which outranks the matcher in both
+    // directions: it catches transfers to accounts that aren't connected (where no counterpart
+    // exists to find), and clears false positives the matcher produced.
+    private static async Task<IResult> MarkTransfer(
+        MarkTransferRequest body,
+        TransactionRepository transactions,
+        ICurrentUser currentUser,
+        CancellationToken ct = default)
+    {
+        if (body.TransactionIds.Length == 0)
+            return TypedResults.BadRequest(new { error = "No transactions given." });
+
+        var userId = currentUser.GetRequiredUserId();
+        var updated = await transactions.SetTransferFlagAsync(userId, body.TransactionIds, body.IsTransfer, ct);
+
+        return TypedResults.Ok(new
+        {
+            updated,
+            message = body.IsTransfer
+                ? $"Marked {updated} transaction(s) as a transfer."
+                : $"Removed the transfer mark from {updated} transaction(s).",
         });
     }
 

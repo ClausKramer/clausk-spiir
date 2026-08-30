@@ -13,7 +13,8 @@ public record TransactionListItem(
     Guid? CategoryId,
     string? CategoryName,
     string? CategoryEmoji,
-    bool IsCategoryManual);
+    bool IsCategoryManual,
+    bool IsManualTransfer);
 
 public record MonthlySummaryRow(Guid? CategoryId, string? CategoryName, string? CategoryEmoji, decimal Total);
 public record MonthlyFlowRow(int Year, int Month, decimal Income, decimal Expense);
@@ -54,7 +55,7 @@ public class TransactionRepository(IDbConnectionFactory connectionFactory)
         var rows = await conn.QueryAsync<TransactionListItem>(
             $"""
             SELECT t.Id, t.BankAccountId, t.BookingDate, t.Amount, t.Currency, t.Description,
-                   t.CategoryId, c.Name AS CategoryName, c.Emoji AS CategoryEmoji, t.IsCategoryManual
+                   t.CategoryId, c.Name AS CategoryName, c.Emoji AS CategoryEmoji, t.IsCategoryManual, t.IsManualTransfer
             FROM Transactions t
             LEFT JOIN Categories c ON c.Id = t.CategoryId
             WHERE t.UserId = @userId AND t.BookingDate >= @from AND t.BookingDate < @to {filter}
@@ -84,7 +85,7 @@ public class TransactionRepository(IDbConnectionFactory connectionFactory)
         var items = await conn.QueryAsync<TransactionListItem>(
             $"""
             SELECT t.Id, t.BankAccountId, t.BookingDate, t.Amount, t.Currency, t.Description,
-                   t.CategoryId, c.Name AS CategoryName, c.Emoji AS CategoryEmoji, t.IsCategoryManual
+                   t.CategoryId, c.Name AS CategoryName, c.Emoji AS CategoryEmoji, t.IsCategoryManual, t.IsManualTransfer
             FROM Transactions t
             LEFT JOIN Categories c ON c.Id = t.CategoryId
             WHERE t.UserId = @userId {filter} {periodFilter} {futureFilter}
@@ -121,6 +122,43 @@ public class TransactionRepository(IDbConnectionFactory connectionFactory)
         return rowsAffected > 0;
     }
 
+    public async Task<int> SetTransferFlagAsync(
+        Guid userId, IReadOnlyList<Guid> transactionIds, bool isTransfer, CancellationToken ct = default)
+    {
+        if (transactionIds.Count == 0) return 0;
+
+        using var conn = await connectionFactory.CreateOpenConnectionAsync(ct);
+        return await conn.ExecuteAsync(
+            "UPDATE Transactions SET IsManualTransfer = @isTransfer WHERE UserId = @userId AND Id IN @transactionIds",
+            new { userId, transactionIds, isTransfer });
+    }
+
+    // Candidates for "is this the other leg?": opposite amount, a different account, near in time.
+    // Deliberately wider than the automatic matcher's window — the user is choosing from this list,
+    // so it should err toward showing a plausible counterpart rather than hiding it.
+    public async Task<IReadOnlyList<TransactionListItem>> FindCounterpartCandidatesAsync(
+        Guid userId, Guid transactionId, int windowDays, CancellationToken ct = default)
+    {
+        using var conn = await connectionFactory.CreateOpenConnectionAsync(ct);
+        var rows = await conn.QueryAsync<TransactionListItem>(
+            """
+            SELECT t.Id, t.BankAccountId, t.BookingDate, t.Amount, t.Currency, t.Description,
+                   t.CategoryId, c.Name AS CategoryName, c.Emoji AS CategoryEmoji, t.IsCategoryManual, t.IsManualTransfer
+            FROM Transactions t
+            LEFT JOIN Categories c ON c.Id = t.CategoryId
+            CROSS JOIN (SELECT Amount, BookingDate, BankAccountId FROM Transactions
+                        WHERE UserId = @userId AND Id = @transactionId) AS src
+            WHERE t.UserId = @userId
+              AND t.Id <> @transactionId
+              AND t.BankAccountId <> src.BankAccountId
+              AND t.Amount = -src.Amount
+              AND ABS(DATEDIFF(DAY, t.BookingDate, src.BookingDate)) <= @windowDays
+            ORDER BY ABS(DATEDIFF(DAY, t.BookingDate, src.BookingDate)), t.BookingDate DESC
+            """,
+            new { userId, transactionId, windowDays });
+        return rows.AsList();
+    }
+
     // Full rows (not just descriptions) for the "apply to similar transactions?" preview, so the
     // user can see date/amount/current category before deciding which ones to include.
     public async Task<IReadOnlyList<TransactionListItem>> GetAutoCategorizedForPreviewAsync(
@@ -130,7 +168,7 @@ public class TransactionRepository(IDbConnectionFactory connectionFactory)
         var rows = await conn.QueryAsync<TransactionListItem>(
             """
             SELECT t.Id, t.BankAccountId, t.BookingDate, t.Amount, t.Currency, t.Description,
-                   t.CategoryId, c.Name AS CategoryName, c.Emoji AS CategoryEmoji, t.IsCategoryManual
+                   t.CategoryId, c.Name AS CategoryName, c.Emoji AS CategoryEmoji, t.IsCategoryManual, t.IsManualTransfer
             FROM Transactions t
             LEFT JOIN Categories c ON c.Id = t.CategoryId
             WHERE t.UserId = @userId AND t.IsCategoryManual = 0

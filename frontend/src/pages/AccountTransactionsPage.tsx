@@ -1,7 +1,7 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
-import { getTransactions } from '../api/transactions'
+import { getTransactions, markDuplicate } from '../api/transactions'
 import { getBankAccounts } from '../api/accounts'
 import { CategoryPicker } from '../components/CategoryPicker'
 
@@ -11,8 +11,19 @@ export function AccountTransactionsPage() {
   const { id } = useParams<{ id: string }>()
   const [page, setPage] = useState(1)
 
+  const qc = useQueryClient()
   const { data: accounts = [] } = useQuery({ queryKey: ['accounts'], queryFn: getBankAccounts })
   const account = accounts.find((a) => a.id === id)
+
+  // This list deliberately shows duplicates, so it's also where they can be undone.
+  const { mutate: setDuplicate } = useMutation({
+    mutationFn: ({ txId, value }: { txId: string; value: boolean }) => markDuplicate([txId], value),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['transactions'] })
+      qc.invalidateQueries({ queryKey: ['dashboard'] })
+      qc.invalidateQueries({ queryKey: ['duplicates'] })
+    },
+  })
 
   const { data: txPage, isLoading } = useQuery({
     queryKey: ['transactions', page, id ? [id] : []],
@@ -63,9 +74,9 @@ export function AccountTransactionsPage() {
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {txPage.items.map((tx) => (
-                    <tr key={tx.id} className={`hover:bg-slate-50 ${tx.isFuture ? 'opacity-60' : ''}`}>
+                    <tr key={tx.id} className={`group/row hover:bg-slate-50 ${tx.isFuture || tx.isDuplicate ? 'opacity-60' : ''}`}>
                       <td className="px-5 py-2.5 whitespace-nowrap text-slate-500">{tx.bookingDate}</td>
-                      <td className="px-5 py-2.5 text-slate-800">
+                      <td className={`px-5 py-2.5 text-slate-800 ${tx.isDuplicate ? 'line-through' : ''}`}>
                         {tx.description}
                         {tx.isFuture && (
                           <span
@@ -74,6 +85,23 @@ export function AccountTransactionsPage() {
                           >
                             Scheduled
                           </span>
+                        )}
+                        {tx.isDuplicate ? (
+                          <button
+                            onClick={() => setDuplicate({ txId: tx.id, value: false })}
+                            className="ml-2 rounded-full border border-red-300 bg-red-50 px-1.5 py-0.5 align-middle text-[0.62rem] font-medium uppercase tracking-wide text-red-700 hover:bg-red-100"
+                            title="Excluded as a duplicate — click to restore it"
+                          >
+                            Duplicate ✕
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => setDuplicate({ txId: tx.id, value: true })}
+                            className="ml-2 align-middle text-[0.62rem] text-slate-300 opacity-0 transition-opacity hover:text-red-500 group-hover/row:opacity-100"
+                            title="Mark as a duplicate copy, so it's excluded from every total"
+                          >
+                            ⧉
+                          </button>
                         )}
                       </td>
                       <td className="px-5 py-2.5">

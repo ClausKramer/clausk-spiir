@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom'
 import { useMe, useLogout } from '../hooks/useAuth'
 import { getTransactions, getDashboard, recategorize, markTransfer, type Period, type Transaction } from '../api/transactions'
 import { MarkTransferDialog } from '../components/MarkTransferDialog'
+import { DuplicatesDialog } from '../components/DuplicatesDialog'
 import { getBankAccounts, syncAll } from '../api/accounts'
 import { syncDefaultCategories, clearLearnedRules } from '../api/categories'
 import { CategoryPicker } from '../components/CategoryPicker'
@@ -120,6 +121,7 @@ export function DashboardPage() {
   const [flowView, setFlowView] = useState<'chart' | 'cards'>('chart')
 
   const [markingTransfer, setMarkingTransfer] = useState<Transaction | null>(null)
+  const [findingDuplicates, setFindingDuplicates] = useState(false)
 
   // Unmarking needs no dialog — there's nothing to choose, and it only ever affects the one row.
   const { mutate: unmarkTransfer } = useMutation({
@@ -180,6 +182,13 @@ export function DashboardPage() {
               title="Re-run categorization on transactions that are still uncategorized"
             >
               {recategorizing ? 'Categorizing…' : 'Recategorize'}
+            </button>
+            <button
+              onClick={() => setFindingDuplicates(true)}
+              className="rounded-lg border border-slate-700 bg-[#1a1f2e] px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-[#232b3b] transition-colors"
+              title="Find transactions recorded twice, e.g. from a CSV import overlapping a bank sync"
+            >
+              Find duplicates
             </button>
             <button
               onClick={() => {
@@ -502,6 +511,14 @@ export function DashboardPage() {
               )}
             </Section>
           </>
+        )}
+
+        {findingDuplicates && (
+          <DuplicatesDialog
+            accountNameById={accountNameById}
+            onClose={() => setFindingDuplicates(false)}
+            onDone={setStatusMessage}
+          />
         )}
 
         {markingTransfer && (

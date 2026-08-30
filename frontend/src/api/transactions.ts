@@ -17,6 +17,37 @@ export interface Transaction {
   isTransfer: boolean
   // Set by hand rather than matched — overrides the automatic detection either way.
   isManualTransfer: boolean
+  // Marked as a duplicate copy — excluded from every total.
+  isDuplicate: boolean
+}
+
+export interface DuplicateGroup {
+  bankAccountId: string
+  bookingDate: string
+  amount: number
+  currency: string
+  suggestedIds: string[]
+  items: { id: string; description: string; source: 'csv' | 'bank'; isDuplicate: boolean; createdAt: string }[]
+}
+
+export interface DuplicateReport {
+  groupCount: number
+  extraCount: number
+  alreadyMarked: number
+  groups: DuplicateGroup[]
+}
+
+export async function getDuplicates(): Promise<DuplicateReport> {
+  const { data } = await client.get('/transactions/duplicates')
+  return data
+}
+
+export async function markDuplicate(
+  transactionIds: string[],
+  isDuplicate: boolean,
+): Promise<{ updated: number; message: string }> {
+  const { data } = await client.post('/transactions/mark-duplicate', { transactionIds, isDuplicate })
+  return data
 }
 
 export async function getCounterpartCandidates(transactionId: string): Promise<{ items: Transaction[] }> {

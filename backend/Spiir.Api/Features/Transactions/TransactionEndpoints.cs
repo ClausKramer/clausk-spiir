@@ -18,6 +18,8 @@ public static class TransactionEndpoints
         group.MapPost("/apply-to-similar", ApplyToSimilar);
         group.MapGet("/counterpart-candidates", GetCounterpartCandidates);
         group.MapPost("/mark-transfer", MarkTransfer);
+        group.MapGet("/duplicates", GetDuplicates);
+        group.MapPost("/mark-duplicate", MarkDuplicate);
         group.MapPatch("/{id:guid}/category", SetCategory);
 
         return app;
@@ -48,8 +50,11 @@ public static class TransactionEndpoints
         // The dashboard opts out of scheduled payments — it's an analysis view, and rows excluded
         // from every figure on the page are noise there. The per-account list keeps them, since
         // that view is for seeing everything the bank has on an account.
+        // Duplicates ride along with includeFuture: the dashboard wants only rows that count, the
+        // per-account list wants everything on record so a mismarked duplicate can be found again.
         var (items, total) = await transactions.GetPageAsync(
-            userId, page, pageSize, accountIds, from, to, includeFuture ? null : Today, ct);
+            userId, page, pageSize, accountIds, from, to, includeFuture ? null : Today,
+            includeDuplicates: includeFuture, ct: ct);
 
         // Which rows the dashboard's totals left out as matched internal transfers. Computed over
         // the whole period rather than the current page — pairing depends on the counterpart being
@@ -92,6 +97,7 @@ public static class TransactionEndpoints
         t.CategoryName,
         t.CategoryEmoji,
         t.IsCategoryManual,
+        t.IsDuplicate,
         IsFuture = IsFuture(t),
         IsTransfer = isTransfer,
         // Distinguished from an auto-matched pair so the UI can show that this one was a decision
@@ -343,7 +349,10 @@ public static class TransactionEndpoints
         var pad = InternalTransferDetector.MaxSettlementDays;
         var padded = await transactions.GetForPeriodAsync(userId, accountIds, from.AddDays(-pad), to.AddDays(pad), ct);
 
-        var settled = padded.Where(t => !IsFuture(t)).ToList();
+        // Duplicates drop out before anything else, including transfer pairing: a duplicated leg
+        // would otherwise consume the pairing its original needed, leaving the real one counted
+        // as income or spending.
+        var settled = padded.Where(t => !IsFuture(t) && !t.IsDuplicate).ToList();
         var pairedIds = InternalTransferDetector.FindPairedIds(settled);
         var inPeriod = settled.Where(t => t.BookingDate >= from && t.BookingDate < to).ToList();
 
@@ -437,6 +446,79 @@ public static class TransactionEndpoints
             message = body.IsTransfer
                 ? $"Marked {updated} transaction(s) as a transfer."
                 : $"Removed the transfer mark from {updated} transaction(s).",
+        });
+    }
+
+    // Groups of transactions that look like the same payment recorded twice, for the user to
+    // review. Each group suggests which copies to drop rather than deciding: when the same
+    // transaction arrived from both a CSV import and a bank sync, the bank's own record is the
+    // one to keep — it carries the bank's id and will keep matching on future syncs, whereas the
+    // imported copy would be re-created by a re-import.
+    private static async Task<IResult> GetDuplicates(
+        TransactionRepository transactions,
+        ICurrentUser currentUser,
+        CancellationToken ct = default)
+    {
+        var userId = currentUser.GetRequiredUserId();
+        var candidates = await transactions.FindDuplicateCandidatesAsync(userId, ct);
+
+        var groups = candidates
+            .GroupBy(c => (c.BankAccountId, c.BookingDate, c.Amount))
+            .Select(g =>
+            {
+                var copies = g.OrderBy(c => c.CreatedAt).ToList();
+                var hasBank = copies.Any(c => c.Source == "bank");
+
+                // Suggest dropping the CSV copies when a bank copy exists; otherwise keep the
+                // first recorded and suggest the rest.
+                var suggested = hasBank
+                    ? copies.Where(c => c.Source == "csv").Select(c => c.Id).ToList()
+                    : copies.Skip(1).Select(c => c.Id).ToList();
+
+                return new
+                {
+                    g.Key.BankAccountId,
+                    g.Key.BookingDate,
+                    g.Key.Amount,
+                    Currency = copies[0].Currency,
+                    SuggestedIds = suggested,
+                    Items = copies.Select(c => new { c.Id, c.Description, c.Source, c.IsDuplicate, c.CreatedAt }),
+                };
+            })
+            .OrderByDescending(g => g.BookingDate)
+            .ToList();
+
+        return TypedResults.Ok(new
+        {
+            groupCount = groups.Count,
+            extraCount = groups.Sum(g => g.SuggestedIds.Count),
+            alreadyMarked = candidates.Count(c => c.IsDuplicate),
+            groups,
+        });
+    }
+
+    private record MarkDuplicateRequest(Guid[] TransactionIds, bool IsDuplicate);
+
+    // Marks copies as duplicates. Flagged, not deleted: the detection is a heuristic over
+    // account+date+amount, so a wrong call has to be reversible.
+    private static async Task<IResult> MarkDuplicate(
+        MarkDuplicateRequest body,
+        TransactionRepository transactions,
+        ICurrentUser currentUser,
+        CancellationToken ct = default)
+    {
+        if (body.TransactionIds.Length == 0)
+            return TypedResults.BadRequest(new { error = "No transactions given." });
+
+        var userId = currentUser.GetRequiredUserId();
+        var updated = await transactions.SetDuplicateFlagAsync(userId, body.TransactionIds, body.IsDuplicate, ct);
+
+        return TypedResults.Ok(new
+        {
+            updated,
+            message = body.IsDuplicate
+                ? $"Marked {updated} transaction(s) as duplicates."
+                : $"Restored {updated} transaction(s).",
         });
     }
 

@@ -14,7 +14,21 @@ public record TransactionListItem(
     string? CategoryName,
     string? CategoryEmoji,
     bool IsCategoryManual,
-    bool IsManualTransfer);
+    bool IsManualTransfer,
+    bool IsDuplicate);
+
+// A set of transactions that look like the same real payment arriving more than once. Source
+// distinguishes how each copy got in, which is usually what tells you which one to keep.
+public record DuplicateCandidate(
+    Guid Id,
+    Guid BankAccountId,
+    DateOnly BookingDate,
+    decimal Amount,
+    string Currency,
+    string Description,
+    string Source,
+    bool IsDuplicate,
+    DateTime CreatedAt);
 
 public record MonthlySummaryRow(Guid? CategoryId, string? CategoryName, string? CategoryEmoji, decimal Total);
 public record MonthlyFlowRow(int Year, int Month, decimal Income, decimal Expense);
@@ -55,7 +69,7 @@ public class TransactionRepository(IDbConnectionFactory connectionFactory)
         var rows = await conn.QueryAsync<TransactionListItem>(
             $"""
             SELECT t.Id, t.BankAccountId, t.BookingDate, t.Amount, t.Currency, t.Description,
-                   t.CategoryId, c.Name AS CategoryName, c.Emoji AS CategoryEmoji, t.IsCategoryManual, t.IsManualTransfer
+                   t.CategoryId, c.Name AS CategoryName, c.Emoji AS CategoryEmoji, t.IsCategoryManual, t.IsManualTransfer, t.IsDuplicate
             FROM Transactions t
             LEFT JOIN Categories c ON c.Id = t.CategoryId
             WHERE t.UserId = @userId AND t.BookingDate >= @from AND t.BookingDate < @to {filter}
@@ -69,7 +83,8 @@ public class TransactionRepository(IDbConnectionFactory connectionFactory)
     // SQL rather than after paging so page sizes and the total count stay consistent.
     public async Task<(IReadOnlyList<TransactionListItem> Items, int TotalCount)> GetPageAsync(
         Guid userId, int page, int pageSize, IReadOnlyList<Guid>? accountIds,
-        DateOnly? from = null, DateOnly? to = null, DateOnly? notAfter = null, CancellationToken ct = default)
+        DateOnly? from = null, DateOnly? to = null, DateOnly? notAfter = null,
+        bool includeDuplicates = true, CancellationToken ct = default)
     {
         using var conn = await connectionFactory.CreateOpenConnectionAsync(ct);
         var filter = AccountFilterClause(accountIds);
@@ -77,18 +92,19 @@ public class TransactionRepository(IDbConnectionFactory connectionFactory)
             ? "AND t.BookingDate >= @from AND t.BookingDate < @to"
             : "";
         var futureFilter = notAfter.HasValue ? "AND t.BookingDate <= @notAfter" : "";
+        var duplicateFilter = includeDuplicates ? "" : "AND t.IsDuplicate = 0";
 
         var total = await conn.ExecuteScalarAsync<int>(
-            $"SELECT COUNT(*) FROM Transactions t WHERE t.UserId = @userId {filter} {periodFilter} {futureFilter}",
+            $"SELECT COUNT(*) FROM Transactions t WHERE t.UserId = @userId {filter} {periodFilter} {futureFilter} {duplicateFilter}",
             new { userId, accountIds, from, to, notAfter });
 
         var items = await conn.QueryAsync<TransactionListItem>(
             $"""
             SELECT t.Id, t.BankAccountId, t.BookingDate, t.Amount, t.Currency, t.Description,
-                   t.CategoryId, c.Name AS CategoryName, c.Emoji AS CategoryEmoji, t.IsCategoryManual, t.IsManualTransfer
+                   t.CategoryId, c.Name AS CategoryName, c.Emoji AS CategoryEmoji, t.IsCategoryManual, t.IsManualTransfer, t.IsDuplicate
             FROM Transactions t
             LEFT JOIN Categories c ON c.Id = t.CategoryId
-            WHERE t.UserId = @userId {filter} {periodFilter} {futureFilter}
+            WHERE t.UserId = @userId {filter} {periodFilter} {futureFilter} {duplicateFilter}
             ORDER BY t.BookingDate DESC, t.CreatedAt DESC, t.Id DESC
             OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY
             """,
@@ -106,7 +122,10 @@ public class TransactionRepository(IDbConnectionFactory connectionFactory)
         var filter = AccountFilterClause(accountIds);
         var asOfFilter = asOf.HasValue ? "AND t.BookingDate <= @asOf" : "";
         return await conn.ExecuteScalarAsync<decimal>(
-            $"SELECT ISNULL(SUM(t.Amount), 0) FROM Transactions t WHERE t.UserId = @userId {filter} {asOfFilter}",
+            $"""
+            SELECT ISNULL(SUM(t.Amount), 0) FROM Transactions t
+            WHERE t.UserId = @userId AND t.IsDuplicate = 0 {filter} {asOfFilter}
+            """,
             new { userId, accountIds, asOf });
     }
 
@@ -133,6 +152,50 @@ public class TransactionRepository(IDbConnectionFactory connectionFactory)
             new { userId, transactionIds, isTransfer });
     }
 
+    public async Task<int> SetDuplicateFlagAsync(
+        Guid userId, IReadOnlyList<Guid> transactionIds, bool isDuplicate, CancellationToken ct = default)
+    {
+        if (transactionIds.Count == 0) return 0;
+
+        using var conn = await connectionFactory.CreateOpenConnectionAsync(ct);
+        return await conn.ExecuteAsync(
+            "UPDATE Transactions SET IsDuplicate = @isDuplicate WHERE UserId = @userId AND Id IN @transactionIds",
+            new { userId, transactionIds, isDuplicate });
+    }
+
+    // Transactions that share an account, a date and an amount — the signature of the same payment
+    // recorded twice. Description is deliberately not part of the key: the whole reason a duplicate
+    // exists is usually that it arrived from two sources, which word it differently.
+    //
+    // Only ever *candidates*: two identical charges at the same merchant on the same day are a real
+    // pattern, so nothing here is acted on without the user confirming.
+    public async Task<IReadOnlyList<DuplicateCandidate>> FindDuplicateCandidatesAsync(
+        Guid userId, CancellationToken ct = default)
+    {
+        using var conn = await connectionFactory.CreateOpenConnectionAsync(ct);
+        var rows = await conn.QueryAsync<DuplicateCandidate>(
+            """
+            SELECT t.Id, t.BankAccountId, t.BookingDate, t.Amount, t.Currency, t.Description,
+                   CASE WHEN t.ExternalTransactionId LIKE 'csv:%' THEN 'csv' ELSE 'bank' END AS Source,
+                   t.IsDuplicate, t.CreatedAt
+            FROM Transactions t
+            JOIN (
+                SELECT BankAccountId, BookingDate, Amount
+                FROM Transactions
+                WHERE UserId = @userId
+                GROUP BY BankAccountId, BookingDate, Amount
+                HAVING COUNT(*) > 1
+            ) dup
+              ON dup.BankAccountId = t.BankAccountId
+             AND dup.BookingDate = t.BookingDate
+             AND dup.Amount = t.Amount
+            WHERE t.UserId = @userId
+            ORDER BY t.BookingDate DESC, t.Amount, t.CreatedAt
+            """,
+            new { userId });
+        return rows.AsList();
+    }
+
     // Candidates for "is this the other leg?": opposite amount, a different account, near in time.
     // Deliberately wider than the automatic matcher's window — the user is choosing from this list,
     // so it should err toward showing a plausible counterpart rather than hiding it.
@@ -143,7 +206,7 @@ public class TransactionRepository(IDbConnectionFactory connectionFactory)
         var rows = await conn.QueryAsync<TransactionListItem>(
             """
             SELECT t.Id, t.BankAccountId, t.BookingDate, t.Amount, t.Currency, t.Description,
-                   t.CategoryId, c.Name AS CategoryName, c.Emoji AS CategoryEmoji, t.IsCategoryManual, t.IsManualTransfer
+                   t.CategoryId, c.Name AS CategoryName, c.Emoji AS CategoryEmoji, t.IsCategoryManual, t.IsManualTransfer, t.IsDuplicate
             FROM Transactions t
             LEFT JOIN Categories c ON c.Id = t.CategoryId
             CROSS JOIN (SELECT Amount, BookingDate, BankAccountId FROM Transactions
@@ -168,7 +231,7 @@ public class TransactionRepository(IDbConnectionFactory connectionFactory)
         var rows = await conn.QueryAsync<TransactionListItem>(
             """
             SELECT t.Id, t.BankAccountId, t.BookingDate, t.Amount, t.Currency, t.Description,
-                   t.CategoryId, c.Name AS CategoryName, c.Emoji AS CategoryEmoji, t.IsCategoryManual, t.IsManualTransfer
+                   t.CategoryId, c.Name AS CategoryName, c.Emoji AS CategoryEmoji, t.IsCategoryManual, t.IsManualTransfer, t.IsDuplicate
             FROM Transactions t
             LEFT JOIN Categories c ON c.Id = t.CategoryId
             WHERE t.UserId = @userId AND t.IsCategoryManual = 0

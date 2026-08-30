@@ -87,14 +87,27 @@ export function CategoryDashboardPage() {
                 what you can renegotiate or cancel, one-offs mostly aren't. */}
             {recurringShare > 0 && (
               <Panel title="🔁 Recurring vs one-off">
+                {/* Segments are rendered only when they have width. At 100% recurring, a
+                    flex-1 sibling would still claim a sliver and imply a one-off share that
+                    isn't there. */}
                 <div className="flex h-6 overflow-hidden rounded">
-                  <div className="flex items-center justify-center bg-[#dc2626] text-[0.65rem] font-semibold text-white/90" style={{ width: `${Math.max(recurringShare * 100, 6)}%` }}>
-                    {recurringShare > 0.12 && `${Math.round(recurringShare * 100)}%`}
-                  </div>
-                  <div className="w-0.5 shrink-0 bg-[#1a1f2e]" />
-                  <div className="flex flex-1 items-center justify-center bg-[#7c2d12] text-[0.65rem] font-semibold text-white/90">
-                    {recurringShare < 0.88 && `${Math.round((1 - recurringShare) * 100)}%`}
-                  </div>
+                  {recurringShare > 0 && (
+                    <div
+                      className="flex items-center justify-center bg-[#dc2626] text-[0.65rem] font-semibold text-white/90"
+                      style={{ width: `${recurringShare * 100}%` }}
+                    >
+                      {recurringShare > 0.12 && `${Math.round(recurringShare * 100)}%`}
+                    </div>
+                  )}
+                  {recurringShare > 0 && recurringShare < 1 && <div className="w-0.5 shrink-0 bg-[#1a1f2e]" />}
+                  {recurringShare < 1 && (
+                    <div
+                      className="flex items-center justify-center bg-[#7c2d12] text-[0.65rem] font-semibold text-white/90"
+                      style={{ width: `${(1 - recurringShare) * 100}%` }}
+                    >
+                      {1 - recurringShare > 0.12 && `${Math.round((1 - recurringShare) * 100)}%`}
+                    </div>
+                  )}
                 </div>
                 <div className="mt-2 flex flex-wrap justify-center gap-4 text-xs text-slate-400">
                   <span className="flex items-center gap-1.5">
@@ -106,22 +119,43 @@ export function CategoryDashboardPage() {
                     One-off {kr(data.total - data.stats.recurringTotal)}
                   </span>
                 </div>
+                <p className="mt-2 text-center text-[0.68rem] text-slate-600">
+                  Recurring = seen in most months of this period. Useful for spotting standing costs.
+                </p>
               </Panel>
             )}
 
             {data.monthlyTotals.length > 1 && (
               <Panel title={`📅 Spend per month — ${periodLabel}`}>
-                <div className="flex items-end gap-1.5" style={{ height: 140 }}>
+                {/* Plot area and labels are separate rows sharing the same flex layout. The plot
+                    row carries a definite height so the bars' percentage heights have something
+                    to resolve against — nesting them under an items-end container sizes each
+                    column to its content instead, and the percentages silently collapse. */}
+                <div className="flex items-stretch gap-1.5" style={{ height: 132 }}>
                   {data.monthlyTotals.map((m) => (
-                    <div key={`${m.year}-${m.month}`} className="group flex flex-1 flex-col items-center justify-end gap-1.5" title={`${MONTH_NAMES[m.month - 1]}: ${kr(m.total)}`}>
-                      <span className="text-[0.6rem] tabular-nums text-slate-500 opacity-0 group-hover:opacity-100">
+                    <div
+                      key={`${m.year}-${m.month}`}
+                      className="group relative flex h-full flex-1 flex-col justify-end"
+                      title={`${MONTH_NAMES[m.month - 1]}: ${kr(m.total)}`}
+                    >
+                      <span className="absolute inset-x-0 -top-1 text-center text-[0.6rem] tabular-nums text-slate-400 opacity-0 transition-opacity group-hover:opacity-100">
                         {m.total > 0 ? Math.round(m.total).toLocaleString('da-DK') : ''}
                       </span>
                       <div
                         className="w-full rounded-t"
-                        style={{ height: `${(m.total / maxMonth) * 100}%`, minHeight: m.total > 0 ? 2 : 0, background: SPEND }}
+                        style={{
+                          height: `${(m.total / maxMonth) * 100}%`,
+                          minHeight: m.total > 0 ? 2 : 0,
+                          background: SPEND,
+                        }}
                       />
-                      <span className="text-[0.6rem] text-slate-600">{MONTH_NAMES[m.month - 1]}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-1.5 flex gap-1.5">
+                  {data.monthlyTotals.map((m) => (
+                    <div key={`l-${m.year}-${m.month}`} className="flex-1 text-center text-[0.6rem] text-slate-600">
+                      {MONTH_NAMES[m.month - 1]}
                     </div>
                   ))}
                 </div>

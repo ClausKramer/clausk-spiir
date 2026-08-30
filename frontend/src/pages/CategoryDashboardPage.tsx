@@ -11,6 +11,9 @@ const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Se
 // and one hue carries it. This is the same expense red used across the app, at the darker step
 // validated for this dark surface.
 const SPEND = '#dc2626'
+// Refunds run the other way, so they get the income green rather than a lighter red — the
+// direction is the point, and a shade of the same hue would read as "less spending", not "money back".
+const REFUND = '#059669'
 
 const kr = (n: number) =>
   n.toLocaleString('da-DK', { style: 'currency', currency: 'DKK', maximumFractionDigits: 0 })
@@ -46,8 +49,10 @@ export function CategoryDashboardPage() {
   // Preserve the dashboard's filters when going back, so the user returns to the view they left.
   const backTo = `/dashboard`
 
-  const maxMonth = Math.max(...(data?.monthlyTotals.map((m) => m.total) ?? [0]), 1)
-  const maxMerchant = Math.max(...(data?.merchants.map((m) => m.total) ?? [0]), 1)
+  // Scaled on magnitude, not value: a month or merchant that nets negative (refunds outweighing
+  // charges) still needs a bar proportional to how much moved, drawn in the refund colour.
+  const maxMonth = Math.max(...(data?.monthlyTotals.map((m) => Math.abs(m.total)) ?? [0]), 1)
+  const maxMerchant = Math.max(...(data?.merchants.map((m) => Math.abs(m.total)) ?? [0]), 1)
   const recurringShare = data && data.total > 0 ? data.stats.recurringTotal / data.total : 0
 
   return (
@@ -62,7 +67,18 @@ export function CategoryDashboardPage() {
               {accountIds.length > 0 && <> &nbsp;·&nbsp; {accountIds.length} of {accounts.length} accounts</>}
             </p>
           </div>
-          {data && <div className="text-right text-2xl font-bold tabular-nums text-red-400">{kr(data.total)}</div>}
+          {data && (
+            <div className="text-right">
+              <div className={`text-2xl font-bold tabular-nums ${data.total >= 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+                {kr(data.total)}
+              </div>
+              {data.refundTotal > 0 && (
+                <div className="mt-0.5 text-[0.68rem] text-slate-500">
+                  {kr(data.spendTotal)} spent − {kr(data.refundTotal)} refunded
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {isLoading ? (
@@ -79,7 +95,15 @@ export function CategoryDashboardPage() {
             <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-4">
               <Kpi label="Per month" value={kr(data.stats.averagePerMonth)} sub={`over ${data.stats.monthsWithData} month${data.stats.monthsWithData === 1 ? '' : 's'} with activity`} />
               <Kpi label="Share of all spending" value={`${(data.stats.shareOfSpending * 100).toFixed(1)}%`} />
-              <Kpi label="Transactions" value={String(data.stats.transactionCount)} sub={`${kr(data.stats.averageTransaction)} average`} />
+              <Kpi
+                label="Transactions"
+                value={String(data.stats.transactionCount)}
+                sub={
+                  data.stats.refundCount > 0
+                    ? `incl. ${data.stats.refundCount} refund${data.stats.refundCount === 1 ? '' : 's'}`
+                    : `${kr(data.stats.averageTransaction)} average`
+                }
+              />
               <Kpi label="Largest single" value={kr(data.stats.largest)} />
             </div>
 
@@ -144,9 +168,9 @@ export function CategoryDashboardPage() {
                       <div
                         className="w-full rounded-t"
                         style={{
-                          height: `${(m.total / maxMonth) * 100}%`,
-                          minHeight: m.total > 0 ? 2 : 0,
-                          background: SPEND,
+                          height: `${(Math.abs(m.total) / maxMonth) * 100}%`,
+                          minHeight: m.total !== 0 ? 2 : 0,
+                          background: m.total < 0 ? REFUND : SPEND,
                         }}
                       />
                     </div>
@@ -171,12 +195,21 @@ export function CategoryDashboardPage() {
                       {m.isRecurring && <span className="ml-1 text-[0.6rem] text-amber-500" title="Appears in most months of this period">🔁</span>}
                     </div>
                     <div className="h-[22px] flex-1 overflow-hidden rounded bg-[#1e2535]">
-                      <div className="flex h-full items-center rounded px-2.5" style={{ width: `${Math.max((m.total / maxMerchant) * 100, 10)}%`, background: SPEND }}>
+                      <div
+                        className="flex h-full items-center rounded px-2.5"
+                        style={{
+                          width: `${Math.max((Math.abs(m.total) / maxMerchant) * 100, 10)}%`,
+                          background: m.total < 0 ? REFUND : SPEND,
+                        }}
+                      >
                         <span className="whitespace-nowrap text-[0.7rem] font-semibold text-white/90">{kr(m.total)}</span>
                       </div>
                     </div>
                     <div className="w-28 shrink-0 text-right text-[0.7rem] tabular-nums text-slate-500">
                       {m.count}× · {kr(m.average)}
+                      {m.refundTotal > 0 && (
+                        <span className="ml-1 text-emerald-500" title={`${kr(m.refundTotal)} refunded`}>↩</span>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -227,7 +260,7 @@ export function CategoryDashboardPage() {
                             categoryEmoji={tx.categoryEmoji}
                           />
                         </td>
-                        <td className="py-2 pl-3 text-right font-semibold tabular-nums text-red-400">
+                        <td className={`py-2 pl-3 text-right font-semibold tabular-nums ${tx.amount < 0 ? 'text-red-400' : 'text-emerald-400'}`}>
                           {tx.amount.toLocaleString('da-DK', { style: 'currency', currency: tx.currency })}
                         </td>
                       </tr>

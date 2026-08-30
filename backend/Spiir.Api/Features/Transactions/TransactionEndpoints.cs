@@ -208,20 +208,36 @@ public static class TransactionEndpoints
         var allItems = await transactions.GetForPeriodAsync(userId, accountIds, from, to, ct);
 
         // Same exclusions as the dashboard, in the same order, so this reconciles with the bar.
+        // Both directions are included: a refund carrying the category belongs to it as much as
+        // the purchase did, and netting it off is the only figure that describes what the
+        // category actually cost.
         var settled = allItems.Where(t => !IsFuture(t)).ToList();
-        var matching = ExcludingInternalTransfers(settled)
-            .Where(t => t.Amount < 0 && t.CategoryId == categoryId)
+        var nonTransfer = ExcludingInternalTransfers(settled);
+        var matching = nonTransfer
+            .Where(t => t.CategoryId == categoryId)
             .OrderByDescending(t => t.BookingDate)
             .ToList();
 
+        // Sign convention throughout: positive means money out. So a refund (a deposit) reduces
+        // the total, and a category whose refunds outweigh its spending goes negative.
         var total = matching.Sum(t => -t.Amount);
-        var allSpending = ExcludingInternalTransfers(settled).Where(t => t.Amount < 0).ToList();
+        var spendTotal = matching.Where(t => t.Amount < 0).Sum(t => -t.Amount);
+        var refundTotal = matching.Where(t => t.Amount > 0).Sum(t => t.Amount);
         var monthsInPeriod = ResolvePeriod(year, month).MonthCount;
+
+        // Share denominator is the net spend of categories that are net-positive — the same set
+        // of bars the dashboard chart draws — so income categories don't inflate it.
+        var totalSpending = nonTransfer
+            .GroupBy(t => t.CategoryId)
+            .Select(g => g.Sum(t => -t.Amount))
+            .Where(v => v > 0)
+            .Sum();
 
         // Which months of the period actually have data. Averages divide by this rather than by
         // the period length, so a part-way-through year doesn't understate the monthly rate by
         // averaging real months against months that haven't happened.
-        var monthsWithData = allSpending
+        var monthsWithData = nonTransfer
+            .Where(t => t.Amount < 0)
             .Select(t => (t.BookingDate.Year, t.BookingDate.Month))
             .Distinct()
             .Count();
@@ -251,11 +267,14 @@ public static class TransactionEndpoints
                 Count = g.Count(),
                 Average = g.Average(t => -t.Amount),
                 Largest = g.Max(t => -t.Amount),
+                RefundTotal = g.Where(t => t.Amount > 0).Sum(t => t.Amount),
                 MonthsPresent = g.Select(t => (t.BookingDate.Year, t.BookingDate.Month)).Distinct().Count(),
                 // Present in most months of a multi-month period — a standing cost rather than a
-                // one-off. Meaningless over a single month, so never flagged there.
+                // one-off. Meaningless over a single month, so never flagged there. Counted on
+                // charges only: a merchant that refunded you in three months isn't a standing cost.
                 IsRecurring = monthsInPeriod > 1
-                              && g.Select(t => (t.BookingDate.Year, t.BookingDate.Month)).Distinct().Count()
+                              && g.Where(t => t.Amount < 0)
+                                  .Select(t => (t.BookingDate.Year, t.BookingDate.Month)).Distinct().Count()
                                  >= Math.Max(2, (int)Math.Ceiling(divisor * 0.6)),
             })
             .OrderByDescending(m => m.Total)
@@ -278,14 +297,21 @@ public static class TransactionEndpoints
             monthlyTotals,
             merchants,
             byAccount,
+            spendTotal,
+            refundTotal,
             stats = new
             {
                 transactionCount = matching.Count,
+                refundCount = matching.Count(t => t.Amount > 0),
                 averagePerMonth = total / divisor,
-                averageTransaction = matching.Count > 0 ? total / matching.Count : 0m,
-                largest = matching.Count > 0 ? matching.Max(t => -t.Amount) : 0m,
+                // Averaged over charges only — mixing refunds in would drag the "typical purchase"
+                // figure toward zero and describe nothing real.
+                averageTransaction = matching.Count(t => t.Amount < 0) is var charges && charges > 0
+                    ? spendTotal / charges
+                    : 0m,
+                largest = matching.Any(t => t.Amount < 0) ? matching.Where(t => t.Amount < 0).Max(t => -t.Amount) : 0m,
                 // What share of everything spent in this period landed in this category.
-                shareOfSpending = allSpending.Count > 0 ? total / allSpending.Sum(t => -t.Amount) : 0m,
+                shareOfSpending = totalSpending > 0 ? total / totalSpending : 0m,
                 recurringTotal = merchants.Where(m => m.IsRecurring).Sum(m => m.Total),
                 monthsWithData,
             },
@@ -299,9 +325,11 @@ public static class TransactionEndpoints
         return items.Where(t => !paired.Contains(t.Id)).ToList();
     }
 
+    // Net per category: a refund carrying a category cancels out part of that category's spend,
+    // so both directions count. Income categories therefore come out negative and are dropped by
+    // the caller, which only draws positive bars — they aren't spending and don't belong here.
     private static List<MonthlySummaryRow> CategoryBreakdown(IReadOnlyList<TransactionListItem> items) =>
         items
-            .Where(t => t.Amount < 0)
             .GroupBy(t => (t.CategoryId, t.CategoryName, t.CategoryEmoji))
             .Select(g => new MonthlySummaryRow(g.Key.CategoryId, g.Key.CategoryName, g.Key.CategoryEmoji, g.Sum(t => -t.Amount)))
             .OrderByDescending(r => r.Total)

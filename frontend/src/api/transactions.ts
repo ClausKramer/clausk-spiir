@@ -151,6 +151,7 @@ export interface CategoryMerchant {
   count: number
   average: number
   largest: number
+  refundTotal: number
   monthsPresent: number
   isRecurring: boolean
 }
@@ -161,12 +162,16 @@ export interface CategoryTransactions {
   to: string
   year: number
   month: number | null
+  // total is net: charges minus refunds carrying this category.
   total: number
+  spendTotal: number
+  refundTotal: number
   monthlyTotals: { year: number; month: number; total: number }[]
   merchants: CategoryMerchant[]
   byAccount: { bankAccountId: string; total: number; count: number }[]
   stats: {
     transactionCount: number
+    refundCount: number
     averagePerMonth: number
     averageTransaction: number
     largest: number

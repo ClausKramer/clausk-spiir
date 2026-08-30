@@ -6,7 +6,6 @@ import { getTransactions, getDashboard, recategorize, type Period } from '../api
 import { getBankAccounts, syncAll } from '../api/accounts'
 import { syncDefaultCategories, clearLearnedRules } from '../api/categories'
 import { CategoryPicker } from '../components/CategoryPicker'
-import { CategoryTransactionsDialog } from '../components/CategoryTransactionsDialog'
 import { CashFlowChart } from '../components/CashFlowChart'
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -115,13 +114,19 @@ export function DashboardPage() {
 
   const accountNameById = new Map(accounts.map((a) => [a.id, a.name]))
 
-  // Which category bar the user drilled into. Held as an object rather than just the id because
-  // the id is null for uncategorized, which wouldn't distinguish "closed" from "uncategorized".
-  const [openCategory, setOpenCategory] = useState<{ id: string | null; label: string } | null>(null)
-
   // Chart by default for the shape of the year; the cards view doubles as this chart's table
   // view, so every plotted value stays readable as text.
   const [flowView, setFlowView] = useState<'chart' | 'cards'>('chart')
+
+  // Carries the dashboard's account filter and period into the category page, so its figures
+  // describe the same slice the user clicked from rather than silently widening to everything.
+  const categoryLinkParams = (() => {
+    const p = new URLSearchParams()
+    p.set('year', String(period.year))
+    if (period.month !== null) p.set('month', String(period.month))
+    accountIdsParam.forEach((id) => p.append('accountIds', id))
+    return p.toString()
+  })()
 
   // Years with data, from the server, plus the current year so "this year" is always selectable
   // even before any transaction lands in it.
@@ -341,13 +346,12 @@ export function DashboardPage() {
                 ) : (
                   <div className="space-y-2">
                     {categoryRows.slice(0, 9).map((row) => {
-                      const label = `${row.categoryEmoji ?? ''} ${row.categoryName ?? 'Uncategorized'}`.trim()
                       return (
-                        <button
+                        <Link
                           key={row.categoryId ?? 'none'}
-                          onClick={() => setOpenCategory({ id: row.categoryId, label })}
+                          to={`/spending/${row.categoryId ?? 'uncategorized'}?${categoryLinkParams}`}
                           className="flex w-full items-center gap-2.5 rounded text-left hover:bg-white/[0.03] focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
-                          title={`Show the ${row.categoryName ?? 'uncategorized'} transactions behind this total`}
+                          title={`Open the ${row.categoryName ?? 'uncategorized'} breakdown`}
                         >
                           <div className="w-36 shrink-0 truncate text-right text-xs text-slate-400">
                             {row.categoryEmoji && <span className="mr-1">{row.categoryEmoji}</span>}
@@ -364,7 +368,8 @@ export function DashboardPage() {
                               <span className="whitespace-nowrap text-[0.7rem] font-semibold text-white/90">{dkk(row.total)}</span>
                             </div>
                           </div>
-                        </button>
+                          <span className="shrink-0 pr-1 text-slate-600">›</span>
+                        </Link>
                       )
                     })}
                   </div>
@@ -472,16 +477,6 @@ export function DashboardPage() {
           </>
         )}
 
-        {openCategory && (
-          <CategoryTransactionsDialog
-            categoryId={openCategory.id}
-            categoryLabel={openCategory.label}
-            accountIds={accountIdsParam}
-            period={period}
-            accountNameById={accountNameById}
-            onClose={() => setOpenCategory(null)}
-          />
-        )}
       </div>
     </div>
   )

@@ -214,12 +214,81 @@ public static class TransactionEndpoints
             .OrderByDescending(t => t.BookingDate)
             .ToList();
 
+        var total = matching.Sum(t => -t.Amount);
+        var allSpending = ExcludingInternalTransfers(settled).Where(t => t.Amount < 0).ToList();
+        var monthsInPeriod = ResolvePeriod(year, month).MonthCount;
+
+        // Which months of the period actually have data. Averages divide by this rather than by
+        // the period length, so a part-way-through year doesn't understate the monthly rate by
+        // averaging real months against months that haven't happened.
+        var monthsWithData = allSpending
+            .Select(t => (t.BookingDate.Year, t.BookingDate.Month))
+            .Distinct()
+            .Count();
+        var divisor = Math.Max(1, monthsWithData);
+
+        var byMonth = matching
+            .GroupBy(t => (t.BookingDate.Year, t.BookingDate.Month))
+            .ToDictionary(g => g.Key, g => g.Sum(t => -t.Amount));
+
+        var monthlyTotals = Enumerable.Range(0, monthsInPeriod)
+            .Select(i => from.AddMonths(i))
+            .Select(d =>
+            {
+                byMonth.TryGetValue((d.Year, d.Month), out var amount);
+                return new { d.Year, d.Month, Total = amount };
+            })
+            .ToList();
+
+        // Grouped by the same merchant key the categorisation rules use, so "where does this
+        // category actually go" lines up with what a learned rule would match on.
+        var merchants = matching
+            .GroupBy(t => MerchantNormalizer.MerchantKey(t.Description), StringComparer.OrdinalIgnoreCase)
+            .Select(g => new
+            {
+                Merchant = g.Key,
+                Total = g.Sum(t => -t.Amount),
+                Count = g.Count(),
+                Average = g.Average(t => -t.Amount),
+                Largest = g.Max(t => -t.Amount),
+                MonthsPresent = g.Select(t => (t.BookingDate.Year, t.BookingDate.Month)).Distinct().Count(),
+                // Present in most months of a multi-month period — a standing cost rather than a
+                // one-off. Meaningless over a single month, so never flagged there.
+                IsRecurring = monthsInPeriod > 1
+                              && g.Select(t => (t.BookingDate.Year, t.BookingDate.Month)).Distinct().Count()
+                                 >= Math.Max(2, (int)Math.Ceiling(divisor * 0.6)),
+            })
+            .OrderByDescending(m => m.Total)
+            .ToList();
+
+        var byAccount = matching
+            .GroupBy(t => t.BankAccountId)
+            .Select(g => new { BankAccountId = g.Key, Total = g.Sum(t => -t.Amount), Count = g.Count() })
+            .OrderByDescending(a => a.Total)
+            .ToList();
+
         return TypedResults.Ok(new
         {
             categoryId,
             from,
             to,
-            total = matching.Sum(t => -t.Amount),
+            year = from.Year,
+            month,
+            total,
+            monthlyTotals,
+            merchants,
+            byAccount,
+            stats = new
+            {
+                transactionCount = matching.Count,
+                averagePerMonth = total / divisor,
+                averageTransaction = matching.Count > 0 ? total / matching.Count : 0m,
+                largest = matching.Count > 0 ? matching.Max(t => -t.Amount) : 0m,
+                // What share of everything spent in this period landed in this category.
+                shareOfSpending = allSpending.Count > 0 ? total / allSpending.Sum(t => -t.Amount) : 0m,
+                recurringTotal = merchants.Where(m => m.IsRecurring).Sum(m => m.Total),
+                monthsWithData,
+            },
             items = matching.Select(WithFutureFlag),
         });
     }

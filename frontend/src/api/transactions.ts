@@ -145,11 +145,35 @@ export async function recategorize(onlyUncategorized = true): Promise<Recategori
   return data
 }
 
+export interface CategoryMerchant {
+  merchant: string
+  total: number
+  count: number
+  average: number
+  largest: number
+  monthsPresent: number
+  isRecurring: boolean
+}
+
 export interface CategoryTransactions {
   categoryId: string | null
   from: string
   to: string
+  year: number
+  month: number | null
   total: number
+  monthlyTotals: { year: number; month: number; total: number }[]
+  merchants: CategoryMerchant[]
+  byAccount: { bankAccountId: string; total: number; count: number }[]
+  stats: {
+    transactionCount: number
+    averagePerMonth: number
+    averageTransaction: number
+    largest: number
+    shareOfSpending: number
+    recurringTotal: number
+    monthsWithData: number
+  }
   items: Transaction[]
 }
 

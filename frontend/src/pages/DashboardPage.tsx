@@ -2,11 +2,9 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { useMe, useLogout } from '../hooks/useAuth'
-import { getTransactions, getDashboard, recategorize, markTransfer, type Period, type Transaction } from '../api/transactions'
+import { getTransactions, getDashboard, markTransfer, type Period, type Transaction } from '../api/transactions'
 import { MarkTransferDialog } from '../components/MarkTransferDialog'
-import { DuplicatesDialog } from '../components/DuplicatesDialog'
-import { getBankAccounts, syncAll } from '../api/accounts'
-import { syncDefaultCategories, clearLearnedRules } from '../api/categories'
+import { getBankAccounts } from '../api/accounts'
 import { CategoryPicker } from '../components/CategoryPicker'
 import { CashFlowChart } from '../components/CashFlowChart'
 
@@ -27,48 +25,6 @@ export function DashboardPage() {
 
   const { data: accounts = [] } = useQuery({ queryKey: ['accounts'], queryFn: getBankAccounts })
 
-  // One banner for both actions — they're mutually exclusive in practice and both just report
-  // "here's what changed", so a shared slot avoids two competing status areas.
-  const [statusMessage, setStatusMessage] = useState<string | null>(null)
-
-  const { mutate: doSync, isPending: syncing } = useMutation({
-    mutationFn: (fullHistory: boolean) => syncAll(fullHistory),
-    onSuccess: (result) => {
-      qc.invalidateQueries({ queryKey: ['transactions'] })
-      qc.invalidateQueries({ queryKey: ['dashboard'] })
-      qc.invalidateQueries({ queryKey: ['accounts'] })
-      setStatusMessage(result.message)
-    },
-    onError: () => setStatusMessage('Sync failed. Please try again.'),
-  })
-
-  // Sync defaults first, then recategorize — new categories are useless to the engine until they
-  // exist, so doing both in one click is the only order that actually helps.
-  const { mutate: doRecategorize, isPending: recategorizing } = useMutation({
-    mutationFn: async () => {
-      const defaults = await syncDefaultCategories()
-      const result = await recategorize(true)
-      return { defaults, result }
-    },
-    onSuccess: ({ defaults, result }) => {
-      qc.invalidateQueries({ queryKey: ['transactions'] })
-      qc.invalidateQueries({ queryKey: ['dashboard'] })
-      qc.invalidateQueries({ queryKey: ['categories'] })
-      const defaultsChanged = defaults.addedCategories > 0 || defaults.addedRules > 0 || defaults.removedRules > 0
-      setStatusMessage(defaultsChanged ? `${defaults.message} ${result.message}` : result.message)
-    },
-    onError: () => setStatusMessage('Recategorize failed. Please try again.'),
-  })
-
-  const { mutate: doClearRules, isPending: clearingRules } = useMutation({
-    mutationFn: clearLearnedRules,
-    onSuccess: (result) => {
-      qc.invalidateQueries({ queryKey: ['transactions'] })
-      qc.invalidateQueries({ queryKey: ['dashboard'] })
-      setStatusMessage(`${result.message} Run Recategorize to re-apply the default rules.`)
-    },
-    onError: () => setStatusMessage('Could not clear learned rules. Please try again.'),
-  })
 
   // null = every account included. Once the user toggles one off, we track an explicit set.
   const [selectedIds, setSelectedIds] = useState<string[] | null>(null)
@@ -121,7 +77,6 @@ export function DashboardPage() {
   const [flowView, setFlowView] = useState<'chart' | 'cards'>('chart')
 
   const [markingTransfer, setMarkingTransfer] = useState<Transaction | null>(null)
-  const [findingDuplicates, setFindingDuplicates] = useState(false)
 
   // Unmarking needs no dialog — there's nothing to choose, and it only ever affects the one row.
   const { mutate: unmarkTransfer } = useMutation({
@@ -167,39 +122,8 @@ export function DashboardPage() {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => doSync(false)}
-              disabled={syncing || accounts.length === 0}
-              className="rounded-lg border border-slate-700 bg-[#1a1f2e] px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-[#232b3b] disabled:opacity-40 transition-colors"
-              title="Fetch new transactions from your banks"
-            >
-              {syncing ? 'Syncing…' : 'Sync'}
-            </button>
-            <button
-              onClick={() => doRecategorize()}
-              disabled={recategorizing || accounts.length === 0}
-              className="rounded-lg border border-slate-700 bg-[#1a1f2e] px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-[#232b3b] disabled:opacity-40 transition-colors"
-              title="Re-run categorization on transactions that are still uncategorized"
-            >
-              {recategorizing ? 'Categorizing…' : 'Recategorize'}
-            </button>
-            <button
-              onClick={() => setFindingDuplicates(true)}
-              className="rounded-lg border border-slate-700 bg-[#1a1f2e] px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-[#232b3b] transition-colors"
-              title="Find transactions recorded twice, e.g. from a CSV import overlapping a bank sync"
-            >
-              Find duplicates
-            </button>
-            <button
-              onClick={() => {
-                if (confirm('Clear all rules learned from your corrections? Default rules and existing categories are kept.')) doClearRules()
-              }}
-              disabled={clearingRules}
-              className="rounded-lg border border-slate-800 px-3 py-1.5 text-xs font-medium text-slate-500 hover:bg-[#1a1f2e] hover:text-slate-300 disabled:opacity-40 transition-colors"
-              title="Remove rules learned from your corrections, e.g. if one turned out too broad"
-            >
-              {clearingRules ? 'Clearing…' : 'Clear learned rules'}
-            </button>
+            {/* Sync, recategorize, duplicate-finding and rule clearing all live on the Accounts
+                page: they change the underlying data, whereas this page only reads it. */}
             <Link
               to="/accounts"
               className="rounded-lg border border-slate-700 bg-[#1a1f2e] px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-[#232b3b] transition-colors"
@@ -215,19 +139,6 @@ export function DashboardPage() {
             </button>
           </div>
         </div>
-
-        {statusMessage && (
-          <div className="mb-4 flex items-start justify-between gap-3 rounded-lg border border-slate-700 bg-[#1a1f2e] px-4 py-2.5 text-xs text-slate-300">
-            <span>{statusMessage}</span>
-            <button
-              onClick={() => setStatusMessage(null)}
-              className="shrink-0 text-slate-600 hover:text-slate-400"
-              aria-label="Dismiss"
-            >
-              ✕
-            </button>
-          </div>
-        )}
 
         {/* Period */}
         <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -511,14 +422,6 @@ export function DashboardPage() {
               )}
             </Section>
           </>
-        )}
-
-        {findingDuplicates && (
-          <DuplicatesDialog
-            accountNameById={accountNameById}
-            onClose={() => setFindingDuplicates(false)}
-            onDone={setStatusMessage}
-          />
         )}
 
         {markingTransfer && (

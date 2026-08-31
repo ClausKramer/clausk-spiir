@@ -2,6 +2,9 @@ import { useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { getBankAccounts, deleteBankAccount, renameBankAccount, importCsv, syncAll, type BankAccount, type ImportCsvResult } from '../api/accounts'
+import { recategorize } from '../api/transactions'
+import { syncDefaultCategories, clearLearnedRules } from '../api/categories'
+import { DuplicatesDialog } from '../components/DuplicatesDialog'
 
 export function AccountsPage() {
   const qc = useQueryClient()
@@ -10,18 +13,58 @@ export function AccountsPage() {
     queryFn: getBankAccounts,
   })
 
+  // Every maintenance action reports the same shape of result — "here's what changed" — so they
+  // share one banner rather than each owning a slot that's empty most of the time.
+  const [statusMessage, setStatusMessage] = useState<string | null>(null)
+  const [findingDuplicates, setFindingDuplicates] = useState(false)
+
+  const accountNameById = new Map(accounts.map((a) => [a.id, a.name]))
+
+  // Everything here changes stored transactions, so they all invalidate the same three caches.
+  function refreshAll() {
+    qc.invalidateQueries({ queryKey: ['accounts'] })
+    qc.invalidateQueries({ queryKey: ['transactions'] })
+    qc.invalidateQueries({ queryKey: ['dashboard'] })
+  }
+
   const { mutate: doDelete, isPending: deleting } = useMutation({
     mutationFn: deleteBankAccount,
     onSuccess: () => qc.invalidateQueries({ queryKey: ['accounts'] }),
   })
 
-  const { mutate: doSync, isPending: syncing, data: syncResult } = useMutation({
+  const { mutate: doSync, isPending: syncing } = useMutation({
     mutationFn: (fullHistory: boolean) => syncAll(fullHistory),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['accounts'] })
-      qc.invalidateQueries({ queryKey: ['transactions'] })
-      qc.invalidateQueries({ queryKey: ['dashboard'] })
+    onSuccess: (result) => {
+      refreshAll()
+      setStatusMessage(result.message)
     },
+    onError: () => setStatusMessage('Sync failed. Please try again.'),
+  })
+
+  // Sync defaults first, then recategorize — new categories are useless to the engine until they
+  // exist, so doing both in one click is the only order that actually helps.
+  const { mutate: doRecategorize, isPending: recategorizing } = useMutation({
+    mutationFn: async () => {
+      const defaults = await syncDefaultCategories()
+      const result = await recategorize(true)
+      return { defaults, result }
+    },
+    onSuccess: ({ defaults, result }) => {
+      refreshAll()
+      qc.invalidateQueries({ queryKey: ['categories'] })
+      const defaultsChanged = defaults.addedCategories > 0 || defaults.addedRules > 0 || defaults.removedRules > 0
+      setStatusMessage(defaultsChanged ? `${defaults.message} ${result.message}` : result.message)
+    },
+    onError: () => setStatusMessage('Recategorize failed. Please try again.'),
+  })
+
+  const { mutate: doClearRules, isPending: clearingRules } = useMutation({
+    mutationFn: clearLearnedRules,
+    onSuccess: (result) => {
+      refreshAll()
+      setStatusMessage(`${result.message} Run Recategorize to re-apply the default rules.`)
+    },
+    onError: () => setStatusMessage('Could not clear learned rules. Please try again.'),
   })
 
   return (
@@ -32,15 +75,27 @@ export function AccountsPage() {
       </header>
 
       <main className="mx-auto max-w-3xl px-6 py-8 space-y-4">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="text-sm text-slate-500">
             {accounts.length} connected account{accounts.length !== 1 ? 's' : ''}
           </p>
-          <div className="flex gap-2">
+          <Link
+            to="/accounts/connect"
+            className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+          >
+            + Add bank
+          </Link>
+        </div>
+
+        {/* Grouped by what each action touches: the first row brings transactions in, the second
+            reorganises the ones already stored. */}
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="mb-3 text-[0.7rem] font-semibold uppercase tracking-wider text-slate-400">Transaction data</p>
+          <div className="flex flex-wrap gap-2">
             <button
               onClick={() => doSync(false)}
               disabled={syncing || accounts.length === 0}
-              className="rounded-lg bg-slate-700 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-40"
+              className="rounded-lg bg-slate-700 px-3.5 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-40"
               title="Fetch transactions added since the last sync"
             >
               {syncing ? 'Syncing…' : 'Sync all'}
@@ -50,23 +105,48 @@ export function AccountsPage() {
                 if (confirm('Fetch the oldest transactions each bank still offers? This can take a while, and banks usually stop offering full history some time after you connect the account.')) doSync(true)
               }}
               disabled={syncing || accounts.length === 0}
-              className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-40"
+              className="rounded-lg border border-slate-300 px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-40"
               title="Fetch as far back as each bank allows, not just what's new"
             >
               Fetch full history
             </button>
-            <Link
-              to="/accounts/connect"
-              className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+
+            <span className="mx-1 w-px self-stretch bg-slate-200" aria-hidden />
+
+            <button
+              onClick={() => doRecategorize()}
+              disabled={recategorizing || accounts.length === 0}
+              className="rounded-lg border border-slate-300 px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-40"
+              title="Re-run categorization on transactions that are still uncategorized"
             >
-              + Add bank
-            </Link>
+              {recategorizing ? 'Categorizing…' : 'Recategorize'}
+            </button>
+            <button
+              onClick={() => setFindingDuplicates(true)}
+              className="rounded-lg border border-slate-300 px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
+              title="Find transactions recorded twice, e.g. from a CSV import overlapping a bank sync"
+            >
+              Find duplicates
+            </button>
+            <button
+              onClick={() => {
+                if (confirm('Clear all rules learned from your corrections? Default rules and existing categories are kept.')) doClearRules()
+              }}
+              disabled={clearingRules}
+              className="rounded-lg px-3.5 py-2 text-sm font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-40"
+              title="Remove rules learned from your corrections, e.g. if one turned out too broad"
+            >
+              {clearingRules ? 'Clearing…' : 'Clear learned rules'}
+            </button>
           </div>
         </div>
 
-        {syncResult && (
-          <div className="rounded-lg bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-700">
-            {syncResult.message}
+        {statusMessage && (
+          <div className="flex items-start justify-between gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 shadow-sm">
+            <span>{statusMessage}</span>
+            <button onClick={() => setStatusMessage(null)} className="shrink-0 text-slate-400 hover:text-slate-600" aria-label="Dismiss">
+              ✕
+            </button>
           </div>
         )}
 
@@ -92,6 +172,14 @@ export function AccountsPage() {
               <AccountRow key={acc.id} account={acc} onDelete={() => doDelete(acc.id)} deleting={deleting} />
             ))}
           </div>
+        )}
+
+        {findingDuplicates && (
+          <DuplicatesDialog
+            accountNameById={accountNameById}
+            onClose={() => setFindingDuplicates(false)}
+            onDone={setStatusMessage}
+          />
         )}
       </main>
     </div>

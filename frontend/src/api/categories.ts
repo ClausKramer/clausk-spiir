@@ -4,6 +4,9 @@ export interface Category {
   id: string
   name: string
   emoji: string | null
+  // null for a top-level group; set for a leaf that transactions are filed under.
+  parentCategoryId: string | null
+  kind: 'Income' | 'Fixed' | 'Variable' | 'Savings' | 'Debt' | 'Transfer'
 }
 
 export async function getCategories(): Promise<Category[]> {

@@ -4,6 +4,7 @@ import { Link, useParams } from 'react-router-dom'
 import { getTransactions, markDuplicate } from '../api/transactions'
 import { getBankAccounts } from '../api/accounts'
 import { CategoryPicker } from '../components/CategoryPicker'
+import { TagEditor } from '../components/TagEditor'
 
 const PAGE_SIZE = 100
 
@@ -103,6 +104,9 @@ export function AccountTransactionsPage() {
                             ⧉
                           </button>
                         )}
+                        <div className="mt-1">
+                          <TagEditor transactionId={tx.id} tags={tx.tags} />
+                        </div>
                       </td>
                       <td className="px-5 py-2.5">
                         <CategoryPicker

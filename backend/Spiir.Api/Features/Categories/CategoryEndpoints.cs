@@ -69,6 +69,6 @@ public static class CategoryEndpoints
         var userId = currentUser.GetRequiredUserId();
         var result = await categories.GetAllForUserAsync(userId, ct);
 
-        return TypedResults.Ok(result.Select(c => new { c.Id, c.Name, c.Emoji }));
+        return TypedResults.Ok(result.Select(c => new { c.Id, c.Name, c.Emoji, c.ParentCategoryId, c.Kind }));
     }
 }

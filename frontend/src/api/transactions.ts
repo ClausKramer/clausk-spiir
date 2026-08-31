@@ -19,6 +19,9 @@ export interface Transaction {
   isManualTransfer: boolean
   // Marked as a duplicate copy — excluded from every total.
   isDuplicate: boolean
+  // Free-form labels, orthogonal to the category: a transaction is filed under exactly one
+  // category but can carry any number of tags.
+  tags: { tagId: string; name: string }[]
 }
 
 export interface DuplicateGroup {
@@ -167,7 +170,18 @@ export interface DashboardData {
   months: number
   availableYears: number[]
   monthlyFlow: MonthlyFlow[]
+  // Rolled up to top-level groups; the category page breaks a group back into its leaves.
   categoryBreakdown: SpendingRow[]
+  // Committed vs discretionary, from each category's declared kind rather than from how
+  // often it recurs.
+  spendingByKind: {
+    fixed: number
+    variable: number
+    savings: number
+    debt: number
+    uncategorized: number
+  }
+  tagBreakdown: { tagId: string; name: string; total: number; count: number }[]
   excludedTransfers: number
   excludedFuture: number
   kpis: {
@@ -215,6 +229,8 @@ export interface CategoryTransactions {
   monthlyTotals: { year: number; month: number; total: number }[]
   merchants: CategoryMerchant[]
   byAccount: { bankAccountId: string; total: number; count: number }[]
+  // A transaction can carry several tags, so these deliberately don't sum to `total`.
+  tagBreakdown: { tagId: string; name: string; total: number; count: number }[]
   stats: {
     transactionCount: number
     refundCount: number

@@ -6,6 +6,7 @@ import { getTransactions, getDashboard, markTransfer, type Period, type Transact
 import { MarkTransferDialog } from '../components/MarkTransferDialog'
 import { getBankAccounts } from '../api/accounts'
 import { CategoryPicker } from '../components/CategoryPicker'
+import { TagEditor } from '../components/TagEditor'
 import { CashFlowChart } from '../components/CashFlowChart'
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -14,6 +15,17 @@ const CATEGORY_COLORS = [
   '#ef4444', '#f97316', '#eab308', '#3b82f6', '#6366f1',
   '#8b5cf6', '#06b6d4', '#ec4899', '#22c55e', '#64748b',
 ]
+
+// Validated as a categorical set against the #111620 panel surface (lightness band, chroma,
+// CVD separation, normal-vision floor, contrast). Uncategorized is deliberately outside the
+// set — it's absence of data, not a fifth kind, so it stays neutral gray.
+const KIND_SLOTS = [
+  { key: 'fixed', label: 'Fixed', color: '#4f46e5', hint: 'Committed costs — rent, insurance, subscriptions' },
+  { key: 'variable', label: 'Variable', color: '#ea580c', hint: 'Discretionary spending you can flex month to month' },
+  { key: 'savings', label: 'Savings', color: '#0d9488', hint: 'Money moved into savings and investments' },
+  { key: 'debt', label: 'Debt', color: '#e11d48', hint: 'Loan and credit repayments' },
+  { key: 'uncategorized', label: 'Unfiled', color: '#475569', hint: 'Spending not filed under any category yet' },
+] as const
 
 const dkk = (n: number) =>
   n.toLocaleString('da-DK', { style: 'currency', currency: 'DKK', maximumFractionDigits: 0 })
@@ -69,6 +81,16 @@ export function DashboardPage() {
   const categoryRows = dashboard?.categoryBreakdown.filter((r) => r.total > 0) ?? []
   const maxCategory = categoryRows.length > 0 ? Math.max(...categoryRows.map((r) => r.total)) : 1
   const categoryColorByKey = new Map(categoryRows.map((r, i) => [r.categoryId ?? 'none', CATEGORY_COLORS[i % CATEGORY_COLORS.length]]))
+
+  // Zero-value kinds are dropped rather than drawn as slivers — a 0% segment is a rendering
+  // artefact, and the legend would claim a category that isn't there.
+  const kindSlots = KIND_SLOTS
+    .map((s) => ({ ...s, value: dashboard?.spendingByKind[s.key] ?? 0 }))
+    .filter((s) => s.value > 0)
+  const kindTotal = kindSlots.reduce((sum, s) => sum + s.value, 0)
+
+  const tagRows = dashboard?.tagBreakdown.filter((t) => t.total > 0) ?? []
+  const maxTag = tagRows.length > 0 ? Math.max(...tagRows.map((t) => t.total)) : 1
 
   const accountNameById = new Map(accounts.map((a) => [a.id, a.name]))
 
@@ -329,6 +351,84 @@ export function DashboardPage() {
               </Section>
             </div>
 
+            <div className="mb-5 grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <Section title={`🧭 Committed vs. discretionary — ${periodLabel}`}>
+                {dashboardLoading ? (
+                  <Spinner />
+                ) : kindTotal === 0 ? (
+                  <p className="py-8 text-center text-sm text-slate-600">No spending in this period.</p>
+                ) : (
+                  <>
+                    {/* One bar, one measure: the period's outgoings split by what kind of
+                        commitment they are. 2px surface gaps keep the segments readable. */}
+                    <div className="flex h-8 gap-0.5 overflow-hidden rounded">
+                      {kindSlots.map((s) => (
+                        <div
+                          key={s.key}
+                          className="flex items-center justify-center first:rounded-l last:rounded-r"
+                          style={{ width: `${(s.value / kindTotal) * 100}%`, background: s.color }}
+                          title={`${s.label}: ${dkk(s.value)}`}
+                        >
+                          {s.value / kindTotal > 0.11 && (
+                            <span className="text-[0.68rem] font-semibold text-white/95">
+                              {Math.round((s.value / kindTotal) * 100)}%
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+
+                    <dl className="mt-3 space-y-1.5">
+                      {kindSlots.map((s) => (
+                        <div key={s.key} className="flex items-center gap-2 text-xs" title={s.hint}>
+                          <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: s.color }} />
+                          <dt className="flex-1 text-slate-400">{s.label}</dt>
+                          <dd className="tabular-nums font-semibold text-slate-200">{dkk(s.value)}</dd>
+                          <dd className="w-10 text-right tabular-nums text-slate-600">
+                            {Math.round((s.value / kindTotal) * 100)}%
+                          </dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </>
+                )}
+              </Section>
+
+              <Section title={`🏷️ Tags — ${periodLabel}`}>
+                {dashboardLoading ? (
+                  <Spinner />
+                ) : tagRows.length === 0 ? (
+                  <p className="px-1 py-8 text-center text-sm text-slate-600">
+                    No tags yet. Hover a transaction and use <span className="text-slate-400">+ tag</span> to label it
+                    — “Padel”, “Føtex”, “Clara” — and its total shows up here.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {tagRows.slice(0, 9).map((tag) => (
+                      <div key={tag.tagId} className="flex items-center gap-2.5">
+                        <div className="w-28 shrink-0 truncate text-right text-xs text-slate-400" title={tag.name}>
+                          {tag.name}
+                        </div>
+                        <div className="h-[22px] flex-1 overflow-hidden rounded bg-[#1e2535]">
+                          <div
+                            className="flex h-full items-center rounded bg-[#7c3aed] px-2.5"
+                            style={{ width: `${Math.max((tag.total / maxTag) * 100, 8)}%` }}
+                          >
+                            <span className="whitespace-nowrap text-[0.7rem] font-semibold text-white/90">
+                              {dkk(tag.total)}
+                            </span>
+                          </div>
+                        </div>
+                        <span className="w-10 shrink-0 text-right text-[0.7rem] tabular-nums text-slate-600">
+                          {tag.count}×
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </Section>
+            </div>
+
             {/* Transactions */}
             <Section
               title={(() => {
@@ -394,6 +494,9 @@ export function DashboardPage() {
                                 ⇄
                               </button>
                             )}
+                            <div className="mt-1">
+                              <TagEditor dark transactionId={tx.id} tags={tx.tags} />
+                            </div>
                           </td>
                           <td className="py-2 pr-3 whitespace-nowrap text-slate-500">{accountNameById.get(tx.bankAccountId) ?? '—'}</td>
                           <td className="py-2 pr-3">

@@ -1,4 +1,5 @@
 using Spiir.Api.Data.Repositories;
+using Spiir.Api.Domain.Entities;
 using Spiir.Api.Features.Categorization;
 using Spiir.Api.Services;
 
@@ -27,6 +28,7 @@ public static class TransactionEndpoints
 
     private static async Task<IResult> GetTransactions(
         TransactionRepository transactions,
+        TagRepository tags,
         ICurrentUser currentUser,
         int page = 1,
         int pageSize = 50,
@@ -64,9 +66,12 @@ public static class TransactionEndpoints
             ? (await LoadWithPairingAsync(transactions, userId, accountIds, from.Value, to.Value, ct)).PairedIds
             : [];
 
+        // One lookup for the whole page rather than a query per row.
+        var tagsByTransaction = await tags.GetForTransactionsAsync(userId, items.Select(t => t.Id).ToList(), ct);
+
         return TypedResults.Ok(new
         {
-            items = items.Select(t => WithFlags(t, IsTransfer(t, paired))),
+            items = items.Select(t => WithFlags(t, IsTransfer(t, paired), tagsByTransaction[t.Id])),
             totalCount = total,
             page,
             pageSize,
@@ -85,7 +90,8 @@ public static class TransactionEndpoints
     // isTransfer marks a row the totals deliberately left out because it paired against an
     // opposite leg in another of the user's accounts. Surfaced so an excluded row is visibly
     // excluded — otherwise it's indistinguishable from one the matching simply missed.
-    private static object WithFlags(TransactionListItem t, bool isTransfer) => new
+    private static object WithFlags(
+        TransactionListItem t, bool isTransfer, IEnumerable<TransactionTagLink>? tagLinks = null) => new
     {
         t.Id,
         t.BankAccountId,
@@ -103,6 +109,7 @@ public static class TransactionEndpoints
         // Distinguished from an auto-matched pair so the UI can show that this one was a decision
         // rather than a guess, and offer to undo it.
         t.IsManualTransfer,
+        Tags = (tagLinks ?? []).Select(l => new { l.TagId, l.Name }),
     };
 
     // A calendar period: a whole year, or one month of it when month is given. Returns the
@@ -124,6 +131,8 @@ public static class TransactionEndpoints
 
     private static async Task<IResult> GetDashboard(
         TransactionRepository transactions,
+        CategoryRepository categories,
+        TagRepository tags,
         ICurrentUser currentUser,
         Guid[]? accountIds = null,
         int? year = null,
@@ -133,6 +142,7 @@ public static class TransactionEndpoints
         var (from, to, months) = ResolvePeriod(year, month);
 
         var userId = currentUser.GetRequiredUserId();
+        var allCategories = await categories.GetAllForUserAsync(userId, ct);
 
         var availableYears = await transactions.GetAvailableYearsAsync(userId, accountIds, ct);
         // asOf: a payment scheduled for next week hasn't left the account, so it shouldn't be in
@@ -185,7 +195,13 @@ public static class TransactionEndpoints
             // can't end up unable to represent its own current selection.
             availableYears = availableYears.Append(from.Year).Distinct().OrderDescending().ToList(),
             monthlyFlow,
-            categoryBreakdown = CategoryBreakdown(spending),
+            // Rolled up to top-level groups: a budget is read at that level, and the category page
+            // is where a group gets broken back down into its leaves.
+            categoryBreakdown = RollUpToGroups(CategoryBreakdown(spending), allCategories),
+            // Committed versus discretionary — the split a budget is actually acted on. Derived
+            // from the category's declared kind rather than inferred from how often it recurs.
+            spendingByKind = SpendingByKind(spending, allCategories),
+            tagBreakdown = await TagBreakdownAsync(tags, userId, spending, ct),
             excludedTransfers = transferCount,
             excludedFuture = futureCount,
             kpis = new
@@ -204,6 +220,7 @@ public static class TransactionEndpoints
     // reconcile would be worse than none.
     private static async Task<IResult> GetByCategory(
         TransactionRepository transactions,
+        TagRepository tags,
         ICurrentUser currentUser,
         Guid? categoryId = null,
         Guid[]? accountIds = null,
@@ -294,6 +311,8 @@ public static class TransactionEndpoints
             .OrderByDescending(a => a.Total)
             .ToList();
 
+        var tagLinks = await tags.GetForTransactionsAsync(userId, matching.Select(t => t.Id).ToList(), ct);
+
         return TypedResults.Ok(new
         {
             categoryId,
@@ -323,8 +342,104 @@ public static class TransactionEndpoints
                 recurringTotal = merchants.Where(m => m.IsRecurring).Sum(m => m.Total),
                 monthsWithData,
             },
-            items = matching.Select(WithFutureFlag),
+            // How this category splits across the labels the user put on it by hand — the
+            // "Padel" slice of Fritid, the "Clara" slice of Familie. Only tags present here.
+            tagBreakdown = TagTotals(matching, tagLinks),
+            items = matching.Select(t => WithFlags(t, t.IsManualTransfer, tagLinks[t.Id])),
         });
+    }
+
+    // Tag totals over an already-filtered set of rows, same sign convention as the caller's
+    // totals (positive = money out). A transaction with two tags counts toward both, so these
+    // deliberately do not sum to the category total.
+    private static object TagTotals(
+        IReadOnlyList<TransactionListItem> rows, ILookup<Guid, TransactionTagLink> links) =>
+        rows
+            .SelectMany(t => links[t.Id].Select(l => (Link: l, t.Amount)))
+            .GroupBy(x => x.Link.TagId)
+            .Select(g => new
+            {
+                TagId = g.Key,
+                Name = g.First().Link.Name,
+                Total = g.Sum(x => -x.Amount),
+                Count = g.Count(),
+            })
+            .OrderByDescending(x => x.Total)
+            .ToList();
+
+    // Leaf totals folded into their top-level group. A leaf without a parent is already top-level
+    // and stands as its own group, so a category the tree doesn't name still appears.
+    private static List<MonthlySummaryRow> RollUpToGroups(
+        IReadOnlyList<MonthlySummaryRow> leaves, IReadOnlyList<Category> allCategories)
+    {
+        var byId = allCategories.ToDictionary(c => c.Id);
+
+        return leaves
+            .GroupBy(row =>
+            {
+                if (row.CategoryId is null || !byId.TryGetValue(row.CategoryId.Value, out var category))
+                    return (Id: (Guid?)null, Name: (string?)null, Emoji: (string?)null);
+
+                var group = category.ParentCategoryId is { } parentId && byId.TryGetValue(parentId, out var parent)
+                    ? parent
+                    : category;
+                return (Id: (Guid?)group.Id, Name: (string?)group.Name, Emoji: group.Emoji);
+            })
+            .Select(g => new MonthlySummaryRow(g.Key.Id, g.Key.Name, g.Key.Emoji, g.Sum(r => r.Total)))
+            .OrderByDescending(r => r.Total)
+            .ToList();
+    }
+
+    private static object SpendingByKind(
+        IReadOnlyList<TransactionListItem> spending, IReadOnlyList<Category> allCategories)
+    {
+        var kindById = allCategories.ToDictionary(c => c.Id, c => c.Kind);
+
+        decimal TotalFor(string kind) => spending
+            .Where(t => t.Amount < 0
+                        && t.CategoryId is { } id
+                        && kindById.TryGetValue(id, out var k)
+                        && k == kind)
+            .Sum(t => -t.Amount);
+
+        var fixedTotal = TotalFor(CategoryKind.Fixed);
+        var variableTotal = TotalFor(CategoryKind.Variable);
+
+        return new
+        {
+            @fixed = fixedTotal,
+            variable = variableTotal,
+            savings = TotalFor(CategoryKind.Savings),
+            debt = TotalFor(CategoryKind.Debt),
+            // Spending that hasn't been filed anywhere yet, kept separate rather than folded into
+            // variable — otherwise the split would quietly overstate what's discretionary.
+            uncategorized = spending
+                .Where(t => t.Amount < 0 && (t.CategoryId is null || !kindById.ContainsKey(t.CategoryId.Value)))
+                .Sum(t => -t.Amount),
+        };
+    }
+
+    private static async Task<object> TagBreakdownAsync(
+        TagRepository tags, Guid userId, IReadOnlyList<TransactionListItem> spending, CancellationToken ct)
+    {
+        // Scoped to the transactions already in view, so a tag total sits in the same period and
+        // account filter as everything else on the page.
+        var links = await tags.GetForTransactionsAsync(userId, spending.Select(t => t.Id).ToList(), ct);
+        var amountById = spending.ToDictionary(t => t.Id, t => t.Amount);
+
+        return links
+            .SelectMany(g => g.Select(link => (link.TagId, link.Name, Amount: amountById[g.Key])))
+            .GroupBy(x => (x.TagId, x.Name))
+            .Select(g => new
+            {
+                tagId = g.Key.TagId,
+                name = g.Key.Name,
+                total = g.Where(x => x.Amount < 0).Sum(x => -x.Amount),
+                count = g.Count(),
+            })
+            .Where(t => t.count > 0)
+            .OrderByDescending(t => t.total)
+            .ToList();
     }
 
     private static List<TransactionListItem> ExcludingInternalTransfers(IReadOnlyList<TransactionListItem> items) =>

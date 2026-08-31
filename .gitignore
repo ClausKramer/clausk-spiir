@@ -435,3 +435,6 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# Local reference material (real bank exports, design references) — not for the repo
+references/

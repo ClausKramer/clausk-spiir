@@ -9,6 +9,7 @@ using Spiir.Api.Features.Auth;
 using Spiir.Api.Features.Categories;
 using Spiir.Api.Features.Categorization;
 using Spiir.Api.Features.Sync;
+using Spiir.Api.Features.Tags;
 using Spiir.Api.Features.Transactions;
 using Spiir.Api.Features.Users;
 using Spiir.Api.Infrastructure.EnableBanking;
@@ -37,6 +38,7 @@ builder.Services.AddScoped<CategorizationRuleRepository>();
 builder.Services.AddScoped<MagicLinkTokenRepository>();
 builder.Services.AddScoped<RefreshTokenRepository>();
 builder.Services.AddScoped<RequisitionRepository>();
+builder.Services.AddScoped<TagRepository>();
 
 // Scoped services
 builder.Services.AddHttpContextAccessor();
@@ -144,6 +146,7 @@ app.MapTransactionEndpoints();
 app.MapCategoryEndpoints();
 app.MapAccountEndpoints();
 app.MapSyncEndpoints();
+app.MapTagEndpoints();
 
 // Dev-only: retrieve last pending magic link URL (avoids needing real email in dev)
 if (app.Environment.IsDevelopment())

@@ -4,6 +4,7 @@ import { getTransactionsByCategory, type Period } from '../api/transactions'
 import { getBankAccounts } from '../api/accounts'
 import { getCategories } from '../api/categories'
 import { CategoryPicker } from '../components/CategoryPicker'
+import { TagEditor } from '../components/TagEditor'
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
@@ -233,6 +234,27 @@ export function CategoryDashboardPage() {
               </Panel>
             )}
 
+            {data.tagBreakdown.length > 0 && (
+              <Panel title="🏷️ By tag">
+                <p className="mb-2.5 text-xs text-slate-600">
+                  Tags cut across categories, and one transaction can carry several — so these
+                  won't add up to {kr(data.total)}.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {data.tagBreakdown.map((tag) => (
+                    <div
+                      key={tag.tagId}
+                      className="rounded-lg border border-violet-500/25 bg-violet-500/10 px-3 py-2"
+                    >
+                      <div className="text-[0.68rem] font-medium text-violet-300">{tag.name}</div>
+                      <div className="mt-0.5 text-sm font-semibold tabular-nums text-slate-200">{kr(tag.total)}</div>
+                      <div className="text-[0.62rem] text-slate-500">{tag.count} transactions</div>
+                    </div>
+                  ))}
+                </div>
+              </Panel>
+            )}
+
             <Panel title="📋 Transactions">
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
@@ -247,9 +269,14 @@ export function CategoryDashboardPage() {
                   </thead>
                   <tbody>
                     {data.items.map((tx) => (
-                      <tr key={tx.id} className="border-b border-[#1e2535] last:border-none hover:bg-white/[0.02]">
+                      <tr key={tx.id} className="group/row border-b border-[#1e2535] last:border-none hover:bg-white/[0.02]">
                         <td className="py-2 pr-3 whitespace-nowrap text-slate-500">{tx.bookingDate}</td>
-                        <td className="py-2 pr-3 text-slate-300">{tx.description}</td>
+                        <td className="py-2 pr-3 text-slate-300">
+                          {tx.description}
+                          <div className="mt-1">
+                            <TagEditor dark transactionId={tx.id} tags={tx.tags} />
+                          </div>
+                        </td>
                         <td className="py-2 pr-3 whitespace-nowrap text-slate-500">{accountNameById.get(tx.bankAccountId) ?? '—'}</td>
                         <td className="py-2 pr-3">
                           <CategoryPicker

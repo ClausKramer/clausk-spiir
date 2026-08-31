@@ -71,6 +71,9 @@ export interface TransactionPage {
   totalCount: number
   page: number
   pageSize: number
+  // Years holding transactions for this account filter, ignoring the current period — what the
+  // period picker offers, so it can always get back out of a year it stepped into.
+  availableYears: number[]
 }
 
 // period and includeFuture are optional: the dashboard scopes to its selection and hides

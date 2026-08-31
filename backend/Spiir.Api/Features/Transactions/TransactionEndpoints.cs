@@ -69,12 +69,17 @@ public static class TransactionEndpoints
         // One lookup for the whole page rather than a query per row.
         var tagsByTransaction = await tags.GetForTransactionsAsync(userId, items.Select(t => t.Id).ToList(), ct);
 
+        // Deliberately unscoped by period — it's what the period picker offers, so filtering it by
+        // the current filter would let the picker drop the year you'd need to get back out.
+        var availableYears = await transactions.GetAvailableYearsAsync(userId, accountIds, ct);
+
         return TypedResults.Ok(new
         {
             items = items.Select(t => WithFlags(t, IsTransfer(t, paired), tagsByTransaction[t.Id])),
             totalCount = total,
             page,
             pageSize,
+            availableYears = availableYears.Append(year ?? Today.Year).Distinct().OrderDescending().ToList(),
         });
     }
 

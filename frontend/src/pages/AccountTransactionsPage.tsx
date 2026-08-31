@@ -1,16 +1,29 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
-import { getTransactions, markDuplicate } from '../api/transactions'
+import { getTransactions, markDuplicate, type Period } from '../api/transactions'
 import { getBankAccounts } from '../api/accounts'
 import { CategoryPicker } from '../components/CategoryPicker'
 import { TagEditor } from '../components/TagEditor'
+import { PeriodNavigator } from '../components/PeriodNavigator'
+import { periodLabel } from '../lib/period'
 
 const PAGE_SIZE = 100
 
 export function AccountTransactionsPage() {
   const { id } = useParams<{ id: string }>()
   const [page, setPage] = useState(1)
+
+  // null means every year on record. This list is the "show me everything the bank has" view,
+  // so it opens unfiltered and the navigator narrows it — the opposite of the dashboard, which
+  // is an analysis view and always scopes to a period.
+  const [period, setPeriod] = useState<Period | null>(null)
+
+  function changePeriod(next: Period | null) {
+    setPeriod(next)
+    // Page 4 of January is almost never a page that exists.
+    setPage(1)
+  }
 
   const qc = useQueryClient()
   const { data: accounts = [] } = useQuery({ queryKey: ['accounts'], queryFn: getBankAccounts })
@@ -27,12 +40,16 @@ export function AccountTransactionsPage() {
   })
 
   const { data: txPage, isLoading } = useQuery({
-    queryKey: ['transactions', page, id ? [id] : []],
-    queryFn: () => getTransactions(page, PAGE_SIZE, id ? [id] : []),
+    queryKey: ['transactions', page, id ? [id] : [], period],
+    queryFn: () => getTransactions(page, PAGE_SIZE, id ? [id] : [], period ?? undefined),
     enabled: !!id,
+    // Holds the previous period's rows on screen while the next load runs, so stepping through
+    // months doesn't flash an empty table between each one.
+    placeholderData: (prev) => prev,
   })
 
   const totalPages = txPage ? Math.max(1, Math.ceil(txPage.totalCount / PAGE_SIZE)) : 1
+  const years = txPage?.availableYears ?? [new Date().getFullYear()]
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -44,11 +61,17 @@ export function AccountTransactionsPage() {
         {txPage && (
           <span className="text-sm text-slate-400">
             {txPage.totalCount} transaction{txPage.totalCount === 1 ? '' : 's'}
+            {period && ` in ${periodLabel(period)}`}
           </span>
         )}
       </header>
 
       <main className="mx-auto max-w-4xl px-6 py-8">
+        <div className="mb-5 flex flex-wrap items-center gap-3">
+          <PeriodNavigator allowAllYears period={period} onChange={changePeriod} availableYears={years} />
+          {!period && <span className="text-sm text-slate-400">Showing all history</span>}
+        </div>
+
         {isLoading ? (
           <div className="flex justify-center py-12">
             <div className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-600 border-t-transparent" />
@@ -56,10 +79,21 @@ export function AccountTransactionsPage() {
         ) : !txPage || txPage.items.length === 0 ? (
           <div className="rounded-xl bg-white border border-slate-100 p-12 text-center shadow-sm">
             <div className="text-4xl mb-3">📭</div>
-            <p className="font-medium text-slate-700">No transactions for this account</p>
-            <p className="mt-1 text-sm text-slate-400">
-              Sync the account, or import older history from a CSV file.
-            </p>
+            {period ? (
+              <>
+                <p className="font-medium text-slate-700">Nothing in {periodLabel(period)}</p>
+                <p className="mt-1 text-sm text-slate-400">
+                  Step to another month, or clear the filter to see the whole account.
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="font-medium text-slate-700">No transactions for this account</p>
+                <p className="mt-1 text-sm text-slate-400">
+                  Sync the account, or import older history from a CSV file.
+                </p>
+              </>
+            )}
           </div>
         ) : (
           <>

@@ -8,8 +8,8 @@ import { getBankAccounts } from '../api/accounts'
 import { CategoryPicker } from '../components/CategoryPicker'
 import { TagEditor } from '../components/TagEditor'
 import { CashFlowChart } from '../components/CashFlowChart'
-
-const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+import { PeriodNavigator } from '../components/PeriodNavigator'
+import { periodLabel, MONTH_NAMES } from '../lib/period'
 
 const CATEGORY_COLORS = [
   '#ef4444', '#f97316', '#eab308', '#3b82f6', '#6366f1',
@@ -124,7 +124,7 @@ export function DashboardPage() {
   const yearOptions = [...new Set([...(dashboard?.availableYears ?? []), new Date().getFullYear(), period.year])]
     .sort((a, b) => b - a)
 
-  const periodLabel = period.month === null ? String(period.year) : `${MONTH_NAMES[period.month - 1]} ${period.year}`
+  const label = periodLabel(period)
 
   const kpis = dashboard?.kpis
   const netBalancePositive = (kpis?.netBalance ?? 0) >= 0
@@ -163,29 +163,15 @@ export function DashboardPage() {
         </div>
 
         {/* Period */}
-        <div className="mb-4 flex flex-wrap items-center gap-2">
-          <span className="mr-1 text-[0.7rem] uppercase tracking-wider text-slate-500">Period</span>
-          <select
-            value={period.year}
-            onChange={(e) => setPeriod((p) => ({ ...p, year: Number(e.target.value) }))}
-            className="rounded-lg border border-slate-700 bg-[#1a1f2e] px-2.5 py-1 text-xs font-medium text-slate-200 outline-none focus:border-indigo-500"
-            aria-label="Year"
-          >
-            {yearOptions.map((y) => (
-              <option key={y} value={y}>{y}</option>
-            ))}
-          </select>
-          <select
-            value={period.month ?? ''}
-            onChange={(e) => setPeriod((p) => ({ ...p, month: e.target.value === '' ? null : Number(e.target.value) }))}
-            className="rounded-lg border border-slate-700 bg-[#1a1f2e] px-2.5 py-1 text-xs font-medium text-slate-200 outline-none focus:border-indigo-500"
-            aria-label="Month"
-          >
-            <option value="">All year</option>
-            {MONTH_NAMES.map((name, i) => (
-              <option key={name} value={i + 1}>{name}</option>
-            ))}
-          </select>
+        <div className="mb-4">
+          {/* No "All years" here: every figure on this page is per-period, and an unbounded
+              range would make the monthly averages meaningless. */}
+          <PeriodNavigator
+            dark
+            period={period}
+            onChange={(p) => p && setPeriod(p)}
+            availableYears={yearOptions}
+          />
         </div>
 
         {/* Account filter */}
@@ -251,7 +237,7 @@ export function DashboardPage() {
 
             {/* Monthly flow */}
             <Section
-              title={`📅 Monthly cash flow — ${periodLabel}`}
+              title={`📅 Monthly cash flow — ${label}`}
               action={
                 <div className="flex rounded-lg border border-slate-700 p-0.5" role="group" aria-label="Cash flow view">
                   {(['chart', 'cards'] as const).map((v) => (
@@ -292,7 +278,7 @@ export function DashboardPage() {
 
             <div className="mb-5 grid grid-cols-1 lg:grid-cols-2 gap-4">
               {/* Category breakdown */}
-              <Section title={`📊 Spending by category — ${periodLabel}`}>
+              <Section title={`📊 Spending by category — ${label}`}>
                 {dashboardLoading ? (
                   <Spinner />
                 ) : categoryRows.length === 0 ? (
@@ -352,7 +338,7 @@ export function DashboardPage() {
             </div>
 
             <div className="mb-5 grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <Section title={`🧭 Committed vs. discretionary — ${periodLabel}`}>
+              <Section title={`🧭 Committed vs. discretionary — ${label}`}>
                 {dashboardLoading ? (
                   <Spinner />
                 ) : kindTotal === 0 ? (
@@ -394,7 +380,7 @@ export function DashboardPage() {
                 )}
               </Section>
 
-              <Section title={`🏷️ Tags — ${periodLabel}`}>
+              <Section title={`🏷️ Tags — ${label}`}>
                 {dashboardLoading ? (
                   <Spinner />
                 ) : tagRows.length === 0 ? (

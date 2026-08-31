@@ -98,6 +98,14 @@ export function DashboardPage() {
   // view, so every plotted value stays readable as text.
   const [flowView, setFlowView] = useState<'chart' | 'cards'>('chart')
 
+  // Average by default: "we spend 4.200 kr/month on groceries" is the figure a budget is set
+  // against, and it's comparable between a part-year and a full one — a total isn't.
+  const [categoryAmounts, setCategoryAmounts] = useState<'average' | 'total'>('average')
+  // Months that actually saw spending, never zero. Over a single selected month this is 1, so
+  // average and total coincide and the toggle is hidden.
+  const monthDivisor = Math.max(1, dashboard?.monthsWithData ?? 1)
+  const showAverage = categoryAmounts === 'average' && monthDivisor > 1
+
   const [markingTransfer, setMarkingTransfer] = useState<Transaction | null>(null)
 
   // Unmarking needs no dialog — there's nothing to choose, and it only ever affects the one row.
@@ -278,41 +286,85 @@ export function DashboardPage() {
 
             <div className="mb-5 grid grid-cols-1 lg:grid-cols-2 gap-4">
               {/* Category breakdown */}
-              <Section title={`📊 Spending by category — ${label}`}>
+              <Section
+                title={`📊 Spending by category — ${label}`}
+                action={
+                  // Meaningless over a single month, where the average is the total.
+                  monthDivisor > 1 ? (
+                    <div
+                      className="flex rounded-lg border border-slate-700 p-0.5"
+                      role="group"
+                      aria-label="Category amounts"
+                    >
+                      {(['average', 'total'] as const).map((v) => (
+                        <button
+                          key={v}
+                          onClick={() => setCategoryAmounts(v)}
+                          aria-pressed={categoryAmounts === v}
+                          className={`rounded-md px-2.5 py-1 text-xs font-medium capitalize transition-colors ${
+                            categoryAmounts === v ? 'bg-[#232b3b] text-slate-200' : 'text-slate-500 hover:text-slate-300'
+                          }`}
+                          title={
+                            v === 'average'
+                              ? `Per month, over the ${monthDivisor} months with spending`
+                              : `Total across ${label}`
+                          }
+                        >
+                          {v}
+                        </button>
+                      ))}
+                    </div>
+                  ) : undefined
+                }
+              >
                 {dashboardLoading ? (
                   <Spinner />
                 ) : categoryRows.length === 0 ? (
                   <p className="text-center text-sm text-slate-600 py-8">No categorized spending yet.</p>
                 ) : (
-                  <div className="space-y-2">
-                    {categoryRows.slice(0, 9).map((row) => {
-                      return (
-                        <Link
-                          key={row.categoryId ?? 'none'}
-                          to={`/spending/${row.categoryId ?? 'uncategorized'}?${categoryLinkParams}`}
-                          className="flex w-full items-center gap-2.5 rounded text-left hover:bg-white/[0.03] focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
-                          title={`Open the ${row.categoryName ?? 'uncategorized'} breakdown`}
-                        >
-                          <div className="w-36 shrink-0 truncate text-right text-xs text-slate-400">
-                            {row.categoryEmoji && <span className="mr-1">{row.categoryEmoji}</span>}
-                            {row.categoryName ?? 'Uncategorized'}
-                          </div>
-                          <div className="h-[22px] flex-1 overflow-hidden rounded bg-[#1e2535]">
-                            <div
-                              className="flex h-full items-center rounded px-2.5 transition-all duration-500"
-                              style={{
-                                width: `${Math.max((row.total / maxCategory) * 100, 8)}%`,
-                                background: categoryColorByKey.get(row.categoryId ?? 'none'),
-                              }}
-                            >
-                              <span className="whitespace-nowrap text-[0.7rem] font-semibold text-white/90">{dkk(row.total)}</span>
+                  <>
+                    <div className="space-y-2">
+                      {categoryRows.slice(0, 9).map((row) => {
+                        const amount = showAverage ? row.total / monthDivisor : row.total
+                        return (
+                          <Link
+                            key={row.categoryId ?? 'none'}
+                            to={`/spending/${row.categoryId ?? 'uncategorized'}?${categoryLinkParams}`}
+                            className="flex w-full items-center gap-2.5 rounded text-left hover:bg-white/[0.03] focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                            title={`Open the ${row.categoryName ?? 'uncategorized'} breakdown`}
+                          >
+                            <div className="w-36 shrink-0 truncate text-right text-xs text-slate-400">
+                              {row.categoryEmoji && <span className="mr-1">{row.categoryEmoji}</span>}
+                              {row.categoryName ?? 'Uncategorized'}
                             </div>
-                          </div>
-                          <span className="shrink-0 pr-1 text-slate-600">›</span>
-                        </Link>
-                      )
-                    })}
-                  </div>
+                            {/* Bars are scaled against the largest bar, so switching unit rescales
+                                every bar by the same divisor and the shape is unchanged. */}
+                            <div className="h-[22px] flex-1 overflow-hidden rounded bg-[#1e2535]">
+                              <div
+                                className="flex h-full items-center rounded px-2.5 transition-all duration-500"
+                                style={{
+                                  width: `${Math.max((row.total / maxCategory) * 100, 8)}%`,
+                                  background: categoryColorByKey.get(row.categoryId ?? 'none'),
+                                }}
+                              >
+                                <span className="whitespace-nowrap text-[0.7rem] font-semibold text-white/90">
+                                  {dkk(amount)}
+                                </span>
+                              </div>
+                            </div>
+                            <span className="shrink-0 pr-1 text-slate-600">›</span>
+                          </Link>
+                        )
+                      })}
+                    </div>
+                    {monthDivisor > 1 && (
+                      <p className="mt-3 text-[0.68rem] text-slate-600">
+                        {showAverage
+                          ? `Per month, averaged over the ${monthDivisor} month${monthDivisor === 1 ? '' : 's'} with spending.`
+                          : `Total across ${label}.`}
+                      </p>
+                    )}
+                  </>
                 )}
               </Section>
 

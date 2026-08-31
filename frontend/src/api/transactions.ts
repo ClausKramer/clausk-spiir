@@ -172,6 +172,9 @@ export interface DashboardData {
   month: number | null
   months: number
   availableYears: number[]
+  // Months of the period that actually saw spending — the divisor for per-month averages, so a
+  // half-elapsed year isn't averaged against months that haven't happened.
+  monthsWithData: number
   monthlyFlow: MonthlyFlow[]
   // Rolled up to top-level groups; the category page breaks a group back into its leaves.
   categoryBreakdown: SpendingRow[]

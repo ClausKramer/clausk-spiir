@@ -130,6 +130,33 @@ var app = builder.Build();
 // Auto-migrate on every startup (idempotent — see Data/DatabaseMigrator.cs and Schema/*.sql).
 await DatabaseMigrator.MigrateAsync(app.Services.GetRequiredService<IDbConnectionFactory>());
 
+// Schema/*.sql adds the columns; this fills them in. Seeded categories change between releases
+// (the flat list became a two-level tree), and an existing account only ever got the defaults
+// that existed when it registered — so without this, every user would have to find and press a
+// button to see the categories a release shipped. Idempotent, so it costs one pass per startup.
+// Deliberately not fatal: bad seed data is worth a broken category tree, not a dead API.
+await using (var seedScope = app.Services.CreateAsyncScope())
+{
+    var seedLogger = seedScope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Seed");
+    try
+    {
+        var users = await seedScope.ServiceProvider.GetRequiredService<UserRepository>().GetAllIdsAsync();
+        var seeder = seedScope.ServiceProvider.GetRequiredService<DefaultDataSeeder>();
+        var changed = 0;
+        foreach (var userId in users)
+        {
+            var (categories, rules, removed) = await seeder.SeedMissingForUserAsync(userId);
+            if (categories > 0 || rules > 0 || removed > 0) changed++;
+        }
+        seedLogger.LogInformation(
+            "Default categories synced for {Changed} of {Total} user(s).", changed, users.Count);
+    }
+    catch (Exception ex)
+    {
+        seedLogger.LogError(ex, "Could not sync default categories at startup.");
+    }
+}
+
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();

@@ -189,6 +189,15 @@ public static class TransactionEndpoints
         var avgIncome = monthlyFlow.Count > 0 ? monthlyFlow.Average(m => m.Income) : 0m;
         var avgExpense = monthlyFlow.Count > 0 ? monthlyFlow.Average(m => m.Expense) : 0m;
 
+        // Months of the period that actually saw spending. Per-month averages divide by this
+        // rather than by the period length: a year that's only half elapsed would otherwise be
+        // averaged against months that haven't happened, halving every figure.
+        var monthsWithData = spending
+            .Where(t => t.Amount < 0)
+            .Select(t => (t.BookingDate.Year, t.BookingDate.Month))
+            .Distinct()
+            .Count();
+
         return TypedResults.Ok(new
         {
             from,
@@ -196,6 +205,7 @@ public static class TransactionEndpoints
             year = from.Year,
             month,
             months,
+            monthsWithData,
             // Always includes the selected year even if it has no transactions yet, so the picker
             // can't end up unable to represent its own current selection.
             availableYears = availableYears.Append(from.Year).Distinct().OrderDescending().ToList(),

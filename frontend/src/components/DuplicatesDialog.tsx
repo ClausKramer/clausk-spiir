@@ -77,6 +77,15 @@ export function DuplicatesDialog({ accountNameById, onClose, onDone }: Props) {
                       {kr(g.amount, g.currency)}
                     </span>
                   </div>
+                  {/* A pair the user never created by hand needs explaining, or the only
+                      conclusion available is that the app invented a transaction. */}
+                  {g.origin === 'bank' && (
+                    <p className="mb-2 rounded bg-sky-50 px-2 py-1.5 text-[0.7rem] text-sky-800">
+                      Both copies came from the bank under different ids — usually a payment that
+                      was sent through once while still pending and again once it settled. Keeping
+                      the newer one; it's the id the bank still reports.
+                    </p>
+                  )}
                   <div className="space-y-1">
                     {g.items.map((i) => (
                       <label
@@ -91,7 +100,9 @@ export function DuplicatesDialog({ accountNameById, onClose, onDone }: Props) {
                           onChange={(e) => setOverrides((prev) => ({ ...prev, [i.id]: e.target.checked }))}
                           className="rounded border-slate-300"
                         />
-                        <span className="min-w-0 flex-1 truncate">{i.description}</span>
+                        <span className="min-w-0 flex-1 truncate" title={`id: ${i.externalTransactionId}`}>
+                          {i.description}
+                        </span>
                         <span
                           className={`shrink-0 rounded px-1.5 py-0.5 text-[0.6rem] uppercase tracking-wide ${
                             i.source === 'csv' ? 'bg-amber-100 text-amber-700' : 'bg-sky-100 text-sky-700'

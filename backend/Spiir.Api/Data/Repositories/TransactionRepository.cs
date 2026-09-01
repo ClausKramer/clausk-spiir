@@ -27,6 +27,10 @@ public record DuplicateCandidate(
     string Currency,
     string Description,
     string Source,
+    // Surfaced so a pair's origin is visible rather than guessed at: two bank ids means the bank
+    // issued the same payment twice (a pending entry later re-issued as booked, say), while a
+    // bank id beside a csv: one means an import overlapped a sync.
+    string ExternalTransactionId,
     bool IsDuplicate,
     DateTime CreatedAt);
 
@@ -177,7 +181,7 @@ public class TransactionRepository(IDbConnectionFactory connectionFactory)
             """
             SELECT t.Id, t.BankAccountId, t.BookingDate, t.Amount, t.Currency, t.Description,
                    CASE WHEN t.ExternalTransactionId LIKE 'csv:%' THEN 'csv' ELSE 'bank' END AS Source,
-                   t.IsDuplicate, t.CreatedAt
+                   t.ExternalTransactionId, t.IsDuplicate, t.CreatedAt
             FROM Transactions t
             JOIN (
                 SELECT BankAccountId, BookingDate, Amount

@@ -55,7 +55,16 @@ public record TransactionsResponse(
 public record TransactionDto(
     [property: JsonPropertyName("transaction_id")] string? TransactionId,
     [property: JsonPropertyName("entry_reference")] string? EntryReference,
-    [property: JsonPropertyName("booking_date")] string BookingDate,
+    // ISO 20022 entry status: BOOK (settled), PDNG (pending), RJCT/CANC (never happened).
+    // Enable Banking's own sync guidance is to work from BOOK entries only: their amount,
+    // direction and booking date are stable, whereas a pending entry is re-issued when it
+    // settles, often under a different id. Importing both is how one statement line becomes two.
+    [property: JsonPropertyName("status")] string? Status,
+    // Absent on some entries (notably pending ones, which may carry only a value date), so
+    // nullable with a fallback rather than a parse that throws mid-sync.
+    [property: JsonPropertyName("booking_date")] string? BookingDate,
+    [property: JsonPropertyName("value_date")] string? ValueDate,
+    [property: JsonPropertyName("transaction_date")] string? TransactionDate,
     [property: JsonPropertyName("transaction_amount")] AmountDto TransactionAmount,
     [property: JsonPropertyName("credit_debit_indicator")] string? CreditDebitIndicator,
     [property: JsonPropertyName("remittance_information")] List<string>? RemittanceInformation,

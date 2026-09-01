@@ -29,8 +29,18 @@ export interface DuplicateGroup {
   bookingDate: string
   amount: number
   currency: string
+  // How the pair arose: both from the bank under different ids, both from CSV imports, or one
+  // of each. Determines which copy is suggested for exclusion, and what the dialog explains.
+  origin: 'bank' | 'csv' | 'mixed'
   suggestedIds: string[]
-  items: { id: string; description: string; source: 'csv' | 'bank'; isDuplicate: boolean; createdAt: string }[]
+  items: {
+    id: string
+    description: string
+    source: 'csv' | 'bank'
+    externalTransactionId: string
+    isDuplicate: boolean
+    createdAt: string
+  }[]
 }
 
 export interface DuplicateReport {

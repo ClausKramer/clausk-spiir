@@ -8,7 +8,8 @@ namespace Spiir.Api.Infrastructure.EnableBanking;
 public class EnableBankingClient(
     IHttpClientFactory httpClientFactory,
     IEnableBankingTokenService tokenService,
-    IOptions<EnableBankingOptions> options) : IEnableBankingClient
+    IOptions<EnableBankingOptions> options,
+    ILogger<EnableBankingClient> logger) : IEnableBankingClient
 {
     private HttpClient AuthenticatedClient()
     {
@@ -61,6 +62,7 @@ public class EnableBankingClient(
     {
         var http = AuthenticatedClient();
         var all = new List<EnableBankingTransaction>();
+        var skippedUnsettled = 0;
 
         // Enable Banking pages transactions: a response carries at most one page plus a
         // continuation_key to fetch the next. Reading only the first page silently truncates
@@ -82,15 +84,35 @@ public class EnableBankingClient(
             var response = await http.GetFromJsonAsync<TransactionsResponse>(url, ct);
             if (response is null) break;
 
-            all.AddRange(response.Transactions.Select(ToTransaction));
+            // Only settled entries are imported. A pending entry is provisional: the bank
+            // re-issues it as a booked entry once it settles, typically under a different
+            // transaction id, so importing both leaves two rows for one statement line —
+            // which is exactly what the account holder's own statement doesn't show. Entries
+            // the bank never carried out (rejected, cancelled) are dropped for the same reason.
+            var booked = response.Transactions.Where(IsBooked).ToList();
+            skippedUnsettled += response.Transactions.Count - booked.Count;
+
+            all.AddRange(booked.Select(ToTransaction));
             continuationKey = string.IsNullOrWhiteSpace(response.ContinuationKey) ? null : response.ContinuationKey;
 
             // Defensive stop: a bank echoing the same key back would otherwise loop forever.
             if (all.Count > 10_000) break;
         } while (continuationKey is not null);
 
+        if (skippedUnsettled > 0)
+            logger.LogInformation(
+                "Skipped {Count} unsettled entries (pending/rejected) for account {Account}.",
+                skippedUnsettled, accountUid);
+
         return all;
     }
+
+    // Treated as booked when the bank says so, and also when it says nothing at all: a missing
+    // status means the ASPSP doesn't report one, and dropping every entry from such a bank would
+    // be far worse than the duplicate this guards against.
+    private static bool IsBooked(TransactionDto t) =>
+        string.IsNullOrWhiteSpace(t.Status)
+        || t.Status.Equals("BOOK", StringComparison.OrdinalIgnoreCase);
 
     private static EnableBankingTransaction ToTransaction(TransactionDto t)
     {
@@ -101,10 +123,21 @@ public class EnableBankingClient(
         var amount = decimal.Parse(t.TransactionAmount.Amount, CultureInfo.InvariantCulture);
         amount = t.CreditDebitIndicator == "DBIT" ? -Math.Abs(amount) : Math.Abs(amount);
 
-        // Not every ASPSP returns transaction_id (PSD2 leaves it optional); fall back to
-        // entry_reference, and as a last resort a composite key so dedup still has something stable.
-        var id = t.TransactionId ?? t.EntryReference ?? $"{t.BookingDate}:{t.TransactionAmount.Amount}:{description}";
+        // booking_date is the settlement date and the one a statement is ordered by. Not every
+        // entry carries it, so fall back rather than throwing mid-sync and losing the batch.
+        var rawDate = t.BookingDate ?? t.ValueDate ?? t.TransactionDate;
+        var date = DateOnly.TryParse(rawDate, CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : DateOnly.FromDateTime(DateTime.UtcNow);
 
-        return new EnableBankingTransaction(id, DateOnly.Parse(t.BookingDate), amount, t.TransactionAmount.Currency, description);
+        // Not every ASPSP returns transaction_id (PSD2 leaves it optional); fall back to
+        // entry_reference, and as a last resort a composite key so dedup still has something
+        // stable. The composite is built from the resolved date, not the raw field, so an entry
+        // that switches which date field it carries doesn't come back as a second transaction.
+        var id = t.TransactionId
+                 ?? t.EntryReference
+                 ?? $"{date:yyyy-MM-dd}:{t.TransactionAmount.Amount}:{description}";
+
+        return new EnableBankingTransaction(id, date, amount, t.TransactionAmount.Currency, description);
     }
 }

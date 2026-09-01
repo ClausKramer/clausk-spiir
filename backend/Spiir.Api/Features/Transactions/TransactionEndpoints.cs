@@ -751,13 +751,23 @@ public static class TransactionEndpoints
             .Select(g =>
             {
                 var copies = g.OrderBy(c => c.CreatedAt).ToList();
-                var hasBank = copies.Any(c => c.Source == "bank");
+                var bankCopies = copies.Where(c => c.Source == "bank").ToList();
 
-                // Suggest dropping the CSV copies when a bank copy exists; otherwise keep the
-                // first recorded and suggest the rest.
-                var suggested = hasBank
-                    ? copies.Where(c => c.Source == "csv").Select(c => c.Id).ToList()
-                    : copies.Skip(1).Select(c => c.Id).ToList();
+                // Which copy survives depends on how the pair arose:
+                //
+                // csv + bank — keep the bank's. It carries the bank's own id, so it keeps
+                //   matching on future syncs, whereas a re-import would recreate the csv one.
+                // bank + bank — the bank issued the same payment under two ids, which is what
+                //   happens when a pending entry is later re-issued as booked. Keep the newest:
+                //   that's the one the most recent sync saw, so it's the id the bank still
+                //   reports and the only one that will keep matching.
+                // csv + csv — keep the first imported; neither has a bank id to prefer.
+                var suggested = bankCopies.Count switch
+                {
+                    0 => copies.Skip(1).Select(c => c.Id).ToList(),
+                    1 => copies.Where(c => c.Source == "csv").Select(c => c.Id).ToList(),
+                    _ => copies.Where(c => c.Id != bankCopies[^1].Id).Select(c => c.Id).ToList(),
+                };
 
                 return new
                 {
@@ -765,8 +775,19 @@ public static class TransactionEndpoints
                     g.Key.BookingDate,
                     g.Key.Amount,
                     Currency = copies[0].Currency,
+                    // What this group looks like, so the UI can explain a pair the user never
+                    // created by hand rather than leaving them to wonder.
+                    Origin = bankCopies.Count switch
+                    {
+                        0 => "csv",
+                        1 when copies.Count > 1 => "mixed",
+                        _ => "bank",
+                    },
                     SuggestedIds = suggested,
-                    Items = copies.Select(c => new { c.Id, c.Description, c.Source, c.IsDuplicate, c.CreatedAt }),
+                    Items = copies.Select(c => new
+                    {
+                        c.Id, c.Description, c.Source, c.ExternalTransactionId, c.IsDuplicate, c.CreatedAt,
+                    }),
                 };
             })
             .OrderByDescending(g => g.BookingDate)

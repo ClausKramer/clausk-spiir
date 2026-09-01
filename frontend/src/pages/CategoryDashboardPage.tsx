@@ -54,6 +54,7 @@ export function CategoryDashboardPage() {
   // charges) still needs a bar proportional to how much moved, drawn in the refund colour.
   const maxMonth = Math.max(...(data?.monthlyTotals.map((m) => Math.abs(m.total)) ?? [0]), 1)
   const maxMerchant = Math.max(...(data?.merchants.map((m) => Math.abs(m.total)) ?? [0]), 1)
+  const maxChild = Math.max(...(data?.childBreakdown.map((c) => Math.abs(c.total)) ?? [0]), 1)
   const recurringShare = data && data.total > 0 ? data.stats.recurringTotal / data.total : 0
 
   return (
@@ -182,6 +183,51 @@ export function CategoryDashboardPage() {
                     <div key={`l-${m.year}-${m.month}`} className="flex-1 text-center text-[0.6rem] text-slate-600">
                       {MONTH_NAMES[m.month - 1]}
                     </div>
+                  ))}
+                </div>
+              </Panel>
+            )}
+
+            {/* A breakdown into one part says nothing the total didn't already — and the
+                merchant panel below is the more useful split at that point. */}
+            {data.childBreakdown.length > 1 && (
+              <Panel title="🗂️ Broken down">
+                <div className="space-y-1.5">
+                  {data.childBreakdown.map((child) => (
+                    <Link
+                      key={child.categoryId ?? 'self'}
+                      to={
+                        child.categoryId
+                          ? `/spending/${child.categoryId}?${search.toString()}`
+                          : '#'
+                      }
+                      onClick={(e) => !child.categoryId && e.preventDefault()}
+                      className={`flex items-center gap-2.5 rounded ${
+                        child.categoryId ? 'hover:bg-white/[0.03]' : 'cursor-default'
+                      }`}
+                      title={child.categoryId ? `Open the ${child.name} breakdown` : 'Filed on the group itself'}
+                    >
+                      <div className="w-40 shrink-0 truncate text-right text-xs text-slate-400">
+                        {child.emoji && <span className="mr-1">{child.emoji}</span>}
+                        {child.name}
+                      </div>
+                      <div className="h-[22px] flex-1 overflow-hidden rounded bg-[#1e2535]">
+                        <div
+                          className="flex h-full items-center rounded px-2.5"
+                          style={{
+                            width: `${Math.max((Math.abs(child.total) / maxChild) * 100, 10)}%`,
+                            background: child.total < 0 ? REFUND : SPEND,
+                          }}
+                        >
+                          <span className="whitespace-nowrap text-[0.7rem] font-semibold text-white/90">
+                            {kr(child.total)}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="w-16 shrink-0 text-right text-[0.7rem] tabular-nums text-slate-500">
+                        {child.count}×
+                      </div>
+                    </Link>
                   ))}
                 </div>
               </Panel>

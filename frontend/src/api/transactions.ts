@@ -235,6 +235,9 @@ export interface CategoryTransactions {
   monthlyTotals: { year: number; month: number; total: number }[]
   merchants: CategoryMerchant[]
   byAccount: { bankAccountId: string; total: number; count: number }[]
+  // The leaves making up a group, empty for a leaf. Rows filed on the group itself come back
+  // with a null categoryId, named "Other", so the parts always add up to the whole.
+  childBreakdown: { categoryId: string | null; name: string; emoji: string | null; total: number; count: number }[]
   // A transaction can carry several tags, so these deliberately don't sum to `total`.
   tagBreakdown: { tagId: string; name: string; total: number; count: number }[]
   stats: {

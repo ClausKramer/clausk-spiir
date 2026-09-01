@@ -235,6 +235,7 @@ public static class TransactionEndpoints
     // reconcile would be worse than none.
     private static async Task<IResult> GetByCategory(
         TransactionRepository transactions,
+        CategoryRepository categories,
         TagRepository tags,
         ICurrentUser currentUser,
         Guid? categoryId = null,
@@ -246,6 +247,17 @@ public static class TransactionEndpoints
         var (from, to, _) = ResolvePeriod(year, month);
 
         var userId = currentUser.GetRequiredUserId();
+        var allCategories = await categories.GetAllForUserAsync(userId, ct);
+
+        // The dashboard's bars are top-level groups, but transactions file to leaves — so asking
+        // for a group has to mean the group and everything under it, or clicking a bar would find
+        // nothing at all. A leaf just matches itself.
+        var children = categoryId is { } id
+            ? allCategories.Where(c => c.ParentCategoryId == id).Select(c => c.Id).ToList()
+            : [];
+        var wanted = categoryId is { } self ? new HashSet<Guid>(children) { self } : [];
+        bool Matches(TransactionListItem t) =>
+            categoryId is null ? t.CategoryId is null : t.CategoryId is { } c && wanted.Contains(c);
 
         // Same exclusions as the dashboard, in the same order, so this reconciles with the bar.
         // Both directions are included: a refund carrying the category belongs to it as much as
@@ -254,7 +266,7 @@ public static class TransactionEndpoints
         var (settled, pairedIds) = await LoadWithPairingAsync(transactions, userId, accountIds, from, to, ct);
         var nonTransfer = settled.Where(t => !IsTransfer(t, pairedIds)).ToList();
         var matching = nonTransfer
-            .Where(t => t.CategoryId == categoryId)
+            .Where(Matches)
             .OrderByDescending(t => t.BookingDate)
             .ToList();
 
@@ -265,10 +277,13 @@ public static class TransactionEndpoints
         var refundTotal = matching.Where(t => t.Amount > 0).Sum(t => t.Amount);
         var monthsInPeriod = ResolvePeriod(year, month).MonthCount;
 
-        // Share denominator is the net spend of categories that are net-positive — the same set
-        // of bars the dashboard chart draws — so income categories don't inflate it.
+        // Share denominator is the net spend of the bars the dashboard actually draws — grouped
+        // the same way, so a group's share is measured against other groups rather than against
+        // individual leaves. Net-positive only, so income categories don't inflate it.
+        var groupIdByCategory = allCategories.ToDictionary(
+            c => c.Id, c => c.ParentCategoryId ?? c.Id);
         var totalSpending = nonTransfer
-            .GroupBy(t => t.CategoryId)
+            .GroupBy(t => t.CategoryId is { } c && groupIdByCategory.TryGetValue(c, out var g) ? g : t.CategoryId)
             .Select(g => g.Sum(t => -t.Amount))
             .Where(v => v > 0)
             .Sum();
@@ -328,9 +343,29 @@ public static class TransactionEndpoints
 
         var tagLinks = await tags.GetForTransactionsAsync(userId, matching.Select(t => t.Id).ToList(), ct);
 
+        // What a group is made of. Empty for a leaf, which has nothing to break down. Rows the
+        // group holds directly (filed on the group itself rather than a leaf) appear as "Other",
+        // so the parts always add up to the whole.
+        var nameById = allCategories.ToDictionary(c => c.Id, c => (c.Name, c.Emoji));
+        var childBreakdown = children.Count == 0
+            ? []
+            : matching
+                .GroupBy(t => t.CategoryId == categoryId ? (Guid?)null : t.CategoryId)
+                .Select(g => new
+                {
+                    CategoryId = g.Key,
+                    Name = g.Key is { } k && nameById.TryGetValue(k, out var n) ? n.Name : "Other",
+                    Emoji = g.Key is { } k2 && nameById.TryGetValue(k2, out var n2) ? n2.Emoji : null,
+                    Total = g.Sum(t => -t.Amount),
+                    Count = g.Count(),
+                })
+                .OrderByDescending(c => c.Total)
+                .ToList();
+
         return TypedResults.Ok(new
         {
             categoryId,
+            childBreakdown,
             from,
             to,
             year = from.Year,

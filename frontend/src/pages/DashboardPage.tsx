@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useMe, useLogout } from '../hooks/useAuth'
 import { getTransactions, getDashboard, markTransfer, type Period, type Transaction } from '../api/transactions'
 import { MarkTransferDialog } from '../components/MarkTransferDialog'
@@ -32,6 +32,7 @@ const dkk = (n: number) =>
 
 export function DashboardPage() {
   const qc = useQueryClient()
+  const navigate = useNavigate()
   const { data: user } = useMe()
   const { mutate: doLogout, isPending: loggingOut } = useLogout()
 
@@ -266,7 +267,18 @@ export function DashboardPage() {
               {dashboardLoading ? (
                 <Spinner />
               ) : flowView === 'chart' ? (
-                <CashFlowChart data={dashboard?.monthlyFlow ?? []} />
+                <CashFlowChart
+                  data={dashboard?.monthlyFlow ?? []}
+                  // Scoped to the bar's own month, not the dashboard's period — the bar shows
+                  // one month, so the page behind it has to as well or the totals won't match.
+                  onSelect={(dir, m) => {
+                    const p = new URLSearchParams()
+                    p.set('year', String(m.year))
+                    p.set('month', String(m.month))
+                    accountIdsParam.forEach((id) => p.append('accountIds', id))
+                    navigate(`/flow/${dir}?${p.toString()}`)
+                  }}
+                />
               ) : (
                 <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
                   {dashboard?.monthlyFlow.map((m) => (

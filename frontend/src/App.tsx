@@ -8,6 +8,7 @@ import { ConnectBankPage } from './pages/ConnectBankPage'
 import { ConnectedPage } from './pages/ConnectedPage'
 import { AccountTransactionsPage } from './pages/AccountTransactionsPage'
 import { CategoryDashboardPage } from './pages/CategoryDashboardPage'
+import { FlowDashboardPage } from './pages/FlowDashboardPage'
 import { PrivacyPage } from './pages/PrivacyPage'
 import { TermsPage } from './pages/TermsPage'
 import { ProtectedRoute } from './components/ProtectedRoute'
@@ -34,6 +35,7 @@ export function App() {
           {/* After the literal /accounts/* routes so "connect"/"connected" aren't read as ids. */}
           <Route path="/accounts/:id/transactions" element={<ProtectedRoute><AccountTransactionsPage /></ProtectedRoute>} />
           <Route path="/spending/:categoryId" element={<ProtectedRoute><CategoryDashboardPage /></ProtectedRoute>} />
+          <Route path="/flow/:direction" element={<ProtectedRoute><FlowDashboardPage /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </BrowserRouter>

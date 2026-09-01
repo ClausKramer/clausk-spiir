@@ -264,6 +264,43 @@ export async function getTransactionsByCategory(
   return data
 }
 
+export type FlowDirection = 'income' | 'expense'
+
+export interface FlowBreakdown {
+  direction: FlowDirection
+  from: string
+  to: string
+  year: number
+  month: number | null
+  // Always positive, whichever direction — a bar has a height, not a sign.
+  total: number
+  byCategory: { categoryId: string | null; name: string | null; emoji: string | null; total: number; count: number }[]
+  bySource: { merchant: string; total: number; count: number; average: number; largest: number }[]
+  byAccount: { bankAccountId: string; total: number; count: number }[]
+  monthlyTotals: { year: number; month: number; total: number }[]
+  tagBreakdown: { tagId: string; name: string; total: number; count: number }[]
+  stats: {
+    transactionCount: number
+    average: number
+    largest: number
+    // null when there's only one month of history — nothing to be typical of yet.
+    periodAverage: number | null
+    monthsWithData: number
+  }
+  items: Transaction[]
+}
+
+export async function getFlowBreakdown(
+  direction: FlowDirection,
+  accountIds: string[],
+  period: Period,
+): Promise<FlowBreakdown> {
+  const params = periodParams(period, accountIds)
+  params.set('direction', direction)
+  const { data } = await client.get('/transactions/by-flow', { params })
+  return data
+}
+
 export async function getDashboard(accountIds: string[], period: Period): Promise<DashboardData> {
   const { data } = await client.get('/transactions/dashboard', {
     params: periodParams(period, accountIds),

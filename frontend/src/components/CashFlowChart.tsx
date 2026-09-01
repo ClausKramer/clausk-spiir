@@ -33,7 +33,14 @@ function niceTicks(min: number, max: number, count = 4): number[] {
   return ticks
 }
 
-export function CashFlowChart({ data }: { data: MonthlyFlow[] }) {
+export function CashFlowChart({
+  data,
+  onSelect,
+}: {
+  data: MonthlyFlow[]
+  // Drill-down for one bar. Omitted, the chart stays purely presentational.
+  onSelect?: (direction: 'income' | 'expense', month: MonthlyFlow) => void
+}) {
   const [hover, setHover] = useState<number | null>(null)
 
   if (data.length === 0) return <p className="py-8 text-center text-sm text-slate-600">No data for this period.</p>
@@ -112,19 +119,46 @@ export function CashFlowChart({ data }: { data: MonthlyFlow[] }) {
           />
         ))}
 
-        {/* Hit targets span the whole band — bigger than the marks they select */}
-        {data.map((d, i) => (
-          <rect
-            key={`h-${d.year}-${d.month}`}
-            x={bandX(i)}
-            y={PAD.top}
-            width={band}
-            height={PLOT_H}
-            fill="transparent"
-            onMouseEnter={() => setHover(i)}
-            onMouseLeave={() => setHover(null)}
-          />
-        ))}
+        {/* Hit targets: half a band each, far bigger than the bars they select, and split down
+            the middle so income and expenses are separately clickable. Both halves drive the
+            same crosshair, so hovering still reads as one month. */}
+        {data.flatMap((d, i) =>
+          (['income', 'expense'] as const).map((dir, half) => (
+            <rect
+              key={`h-${dir}-${d.year}-${d.month}`}
+              x={bandX(i) + (half * band) / 2}
+              y={PAD.top}
+              width={band / 2}
+              height={PLOT_H}
+              fill="transparent"
+              onMouseEnter={() => setHover(i)}
+              onMouseLeave={() => setHover(null)}
+              onClick={onSelect ? () => onSelect(dir, d) : undefined}
+              onKeyDown={
+                onSelect
+                  ? (e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        onSelect(dir, d)
+                      }
+                    }
+                  : undefined
+              }
+              onFocus={() => setHover(i)}
+              onBlur={() => setHover(null)}
+              tabIndex={onSelect ? 0 : undefined}
+              role={onSelect ? 'button' : undefined}
+              aria-label={
+                onSelect
+                  ? `${dir === 'income' ? 'Income' : 'Expenses'} for ${MONTH_NAMES[d.month - 1]} ${d.year}: ${kr(
+                      dir === 'income' ? d.income : d.expense,
+                    )} kroner`
+                  : undefined
+              }
+              className={onSelect ? 'cursor-pointer focus:outline-none focus-visible:stroke-slate-400' : undefined}
+            />
+          )),
+        )}
         {hover !== null && (
           <line
             x1={bandX(hover) + band / 2}
@@ -160,6 +194,11 @@ export function CashFlowChart({ data }: { data: MonthlyFlow[] }) {
               <span className="ml-auto tabular-nums text-slate-200">{kr(row.value)} kr.</span>
             </div>
           ))}
+          {onSelect && (
+            <div className="mt-1 border-t border-slate-700 pt-1 text-[0.65rem] text-slate-500">
+              Click a bar to break it down
+            </div>
+          )}
         </div>
       )}
 

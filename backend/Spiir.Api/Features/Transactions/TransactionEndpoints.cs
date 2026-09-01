@@ -14,6 +14,7 @@ public static class TransactionEndpoints
         group.MapGet("/", GetTransactions);
         group.MapGet("/dashboard", GetDashboard);
         group.MapGet("/by-category", GetByCategory);
+        group.MapGet("/by-flow", GetByFlow);
         group.MapPost("/recategorize", Recategorize);
         group.MapGet("/similar", GetSimilar);
         group.MapPost("/apply-to-similar", ApplyToSimilar);
@@ -226,6 +227,124 @@ public static class TransactionEndpoints
                 avgMonthlySurplus = avgIncome - avgExpense,
                 netBalance,
             },
+        });
+    }
+
+    // One bar of the monthly cash flow chart: everything in or out of a single month, in one
+    // direction. Applies the same exclusions the chart's own figures do — matched transfers,
+    // scheduled payments and duplicates — so the total here is the height of the bar clicked.
+    private static async Task<IResult> GetByFlow(
+        TransactionRepository transactions,
+        CategoryRepository categories,
+        TagRepository tags,
+        ICurrentUser currentUser,
+        string direction = "expense",
+        Guid[]? accountIds = null,
+        int? year = null,
+        int? month = null,
+        CancellationToken ct = default)
+    {
+        var income = string.Equals(direction, "income", StringComparison.OrdinalIgnoreCase);
+        var (from, to, monthCount) = ResolvePeriod(year, month);
+
+        var userId = currentUser.GetRequiredUserId();
+        var allCategories = await categories.GetAllForUserAsync(userId, ct);
+
+        var (settled, pairedIds) = await LoadWithPairingAsync(transactions, userId, accountIds, from, to, ct);
+        var nonTransfer = settled.Where(t => !IsTransfer(t, pairedIds)).ToList();
+
+        // Strictly one side. Unlike a category — where a refund belongs to the category that the
+        // purchase did — an income bar is the sum of money in and nothing else, so mixing
+        // directions would stop the total matching the bar.
+        var matching = nonTransfer
+            .Where(t => income ? t.Amount > 0 : t.Amount < 0)
+            .OrderByDescending(t => t.BookingDate)
+            .ToList();
+
+        // Positive throughout, whichever direction: a bar has a height, not a sign.
+        decimal Magnitude(TransactionListItem t) => income ? t.Amount : -t.Amount;
+        var total = matching.Sum(Magnitude);
+
+        // Grouped to top-level groups, matching how the dashboard's category chart reads, so
+        // clicking through from either place tells the same story.
+        var groupOf = allCategories.ToDictionary(c => c.Id, c => c.ParentCategoryId ?? c.Id);
+        var nameById = allCategories.ToDictionary(c => c.Id, c => (c.Name, c.Emoji));
+        var byCategory = matching
+            .GroupBy(t => t.CategoryId is { } c && groupOf.TryGetValue(c, out var g) ? g : (Guid?)null)
+            .Select(g => new
+            {
+                CategoryId = g.Key,
+                Name = g.Key is { } k && nameById.TryGetValue(k, out var n) ? n.Name : null,
+                Emoji = g.Key is { } k2 && nameById.TryGetValue(k2, out var n2) ? n2.Emoji : null,
+                Total = g.Sum(Magnitude),
+                Count = g.Count(),
+            })
+            .OrderByDescending(c => c.Total)
+            .ToList();
+
+        var bySource = matching
+            .GroupBy(t => MerchantNormalizer.MerchantKey(t.Description), StringComparer.OrdinalIgnoreCase)
+            .Select(g => new
+            {
+                Merchant = g.Key,
+                Total = g.Sum(Magnitude),
+                Count = g.Count(),
+                Average = g.Average(Magnitude),
+                Largest = g.Max(Magnitude),
+            })
+            .OrderByDescending(m => m.Total)
+            .ToList();
+
+        var byAccount = matching
+            .GroupBy(t => t.BankAccountId)
+            .Select(g => new { BankAccountId = g.Key, Total = g.Sum(Magnitude), Count = g.Count() })
+            .OrderByDescending(a => a.Total)
+            .ToList();
+
+        var byMonth = matching
+            .GroupBy(t => (t.BookingDate.Year, t.BookingDate.Month))
+            .ToDictionary(g => g.Key, g => g.Sum(Magnitude));
+
+        var monthlyTotals = Enumerable.Range(0, monthCount)
+            .Select(i => from.AddMonths(i))
+            .Select(d =>
+            {
+                byMonth.TryGetValue((d.Year, d.Month), out var amount);
+                return new { d.Year, d.Month, Total = amount };
+            })
+            .ToList();
+
+        // The comparison that makes a single month readable: is this one normal? Averaged over
+        // months that actually had activity, so a part-year doesn't drag the baseline down.
+        var monthsWithData = byMonth.Count(kv => kv.Value > 0);
+        var periodAverage = monthsWithData > 0 ? byMonth.Values.Sum() / monthsWithData : 0m;
+
+        var tagLinks = await tags.GetForTransactionsAsync(userId, matching.Select(t => t.Id).ToList(), ct);
+
+        return TypedResults.Ok(new
+        {
+            direction = income ? "income" : "expense",
+            from,
+            to,
+            year = from.Year,
+            month,
+            total,
+            byCategory,
+            bySource,
+            byAccount,
+            monthlyTotals,
+            tagBreakdown = TagTotals(matching, tagLinks),
+            stats = new
+            {
+                transactionCount = matching.Count,
+                average = matching.Count > 0 ? total / matching.Count : 0m,
+                largest = matching.Count > 0 ? matching.Max(Magnitude) : 0m,
+                // Null when there's nothing to compare against — a single month of history has
+                // no "usual" to be above or below, and inventing one would mislead.
+                periodAverage = monthsWithData > 1 ? periodAverage : (decimal?)null,
+                monthsWithData,
+            },
+            items = matching.Select(t => WithFlags(t, t.IsManualTransfer, tagLinks[t.Id])),
         });
     }
 

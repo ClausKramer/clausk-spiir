@@ -1,10 +1,11 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
-import { getTransactionsByCategory, type Period } from '../api/transactions'
+import { getTransactionsByCategory, type Period, type TransactionQuery } from '../api/transactions'
 import { getBankAccounts } from '../api/accounts'
 import { getCategories } from '../api/categories'
 import { CategoryPicker } from '../components/CategoryPicker'
 import { TagEditor } from '../components/TagEditor'
+import { drillTo } from '../lib/drill'
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
@@ -49,6 +50,15 @@ export function CategoryDashboardPage() {
 
   // Preserve the dashboard's filters when going back, so the user returns to the view they left.
   const backTo = `/dashboard`
+
+  // Every figure on this page opens the rows behind it, always narrowed to this category (or to
+  // uncategorized) so a merchant or tag total means "within this category", matching the number
+  // shown. `accountOverride` is for the per-account cards, which narrow further to one account.
+  const drill = (
+    text: string,
+    query: TransactionQuery,
+    accountOverride?: string[],
+  ) => drillTo(text, query, accountOverride ?? accountIds, period, { measure: 'outflow' })
 
   // Scaled on magnitude, not value: a month or merchant that nets negative (refunds outweighing
   // charges) still needs a bar proportional to how much moved, drawn in the refund colour.
@@ -236,8 +246,13 @@ export function CategoryDashboardPage() {
             <Panel title="🏬 Where it goes">
               <div className="space-y-1.5">
                 {data.merchants.slice(0, 12).map((m) => (
-                  <div key={m.merchant} className="flex items-center gap-2.5">
-                    <div className="w-40 shrink-0 truncate text-right text-xs text-slate-400" title={m.merchant}>
+                  <Link
+                    key={m.merchant}
+                    to={drill(m.merchant, { merchant: m.merchant, categoryId: categoryId ?? undefined, uncategorized: categoryId === null })}
+                    className="-mx-1 flex items-center gap-2.5 rounded px-1 hover:bg-white/[0.03]"
+                    title={`Show the ${m.merchant} transactions in this category`}
+                  >
+                    <div className="w-40 shrink-0 truncate text-right text-xs text-slate-400">
                       {m.merchant}
                       {m.isRecurring && <span className="ml-1 text-[0.6rem] text-amber-500" title="Appears in most months of this period">🔁</span>}
                     </div>
@@ -258,7 +273,7 @@ export function CategoryDashboardPage() {
                         <span className="ml-1 text-emerald-500" title={`${kr(m.refundTotal)} refunded`}>↩</span>
                       )}
                     </div>
-                  </div>
+                  </Link>
                 ))}
                 {data.merchants.length > 12 && (
                   <p className="pt-1 text-center text-xs text-slate-600">…and {data.merchants.length - 12} more</p>
@@ -270,11 +285,15 @@ export function CategoryDashboardPage() {
               <Panel title="🏦 By account">
                 <div className="flex flex-wrap gap-2">
                   {data.byAccount.map((a) => (
-                    <div key={a.bankAccountId} className="rounded-lg border border-[#1e2535] bg-[#111620] px-3 py-2">
+                    <Link
+                      key={a.bankAccountId}
+                      to={drill(accountNameById.get(a.bankAccountId) ?? 'Account', { categoryId: categoryId ?? undefined, uncategorized: categoryId === null }, [a.bankAccountId])}
+                      className="rounded-lg border border-[#1e2535] bg-[#111620] px-3 py-2 hover:border-slate-600"
+                    >
                       <div className="text-[0.68rem] text-slate-500">{accountNameById.get(a.bankAccountId) ?? 'Unknown account'}</div>
                       <div className="mt-0.5 text-sm font-semibold tabular-nums text-slate-200">{kr(a.total)}</div>
                       <div className="text-[0.62rem] text-slate-600">{a.count} transactions</div>
-                    </div>
+                    </Link>
                   ))}
                 </div>
               </Panel>
@@ -288,14 +307,15 @@ export function CategoryDashboardPage() {
                 </p>
                 <div className="flex flex-wrap gap-2">
                   {data.tagBreakdown.map((tag) => (
-                    <div
+                    <Link
                       key={tag.tagId}
-                      className="rounded-lg border border-violet-500/25 bg-violet-500/10 px-3 py-2"
+                      to={drill(tag.name, { tagId: tag.tagId, categoryId: categoryId ?? undefined, uncategorized: categoryId === null })}
+                      className="rounded-lg border border-violet-500/25 bg-violet-500/10 px-3 py-2 hover:border-violet-400/50"
                     >
                       <div className="text-[0.68rem] font-medium text-violet-300">{tag.name}</div>
                       <div className="mt-0.5 text-sm font-semibold tabular-nums text-slate-200">{kr(tag.total)}</div>
                       <div className="text-[0.62rem] text-slate-500">{tag.count} transactions</div>
-                    </div>
+                    </Link>
                   ))}
                 </div>
               </Panel>

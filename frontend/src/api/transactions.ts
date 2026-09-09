@@ -274,6 +274,47 @@ export async function getTransactionsByCategory(
   return data
 }
 
+// The filters behind any figure on any page. Every drill-down link is one of these, and the
+// endpoint applies them in the same order the aggregations do, so the total always reconciles.
+export interface TransactionQuery {
+  // 'settled' is what every dashboard figure is computed over. The others open the rows those
+  // exclusions removed; 'balance' is the net-balance figure's own scope (all history to today).
+  scope?: 'settled' | 'transfers' | 'future' | 'balance'
+  categoryId?: string
+  uncategorized?: boolean
+  tagId?: string
+  merchant?: string
+  kind?: string
+  direction?: FlowDirection
+}
+
+export interface QueryResult {
+  scope: string
+  year: number | null
+  month: number | null
+  months: number
+  net: number
+  inflow: number
+  outflow: number
+  count: number
+  monthsWithData: number
+  monthlyTotals: { year: number; month: number; net: number }[]
+  items: Transaction[]
+}
+
+export async function runTransactionQuery(
+  query: TransactionQuery,
+  accountIds: string[],
+  period: Period,
+): Promise<QueryResult> {
+  const params = periodParams(period, accountIds)
+  Object.entries(query).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== false) params.set(k, String(v))
+  })
+  const { data } = await client.get('/transactions/query', { params })
+  return data
+}
+
 export type FlowDirection = 'income' | 'expense'
 
 export interface FlowBreakdown {

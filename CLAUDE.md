@@ -200,3 +200,19 @@ implemented but untested against a real bank connection (no Enable Banking appli
 yet), `ResendEmailSender` is implemented but untested live (no Resend API key configured yet — falls back
 to `DevConsoleSender` until it is), and the `CategorizationRule.Priority` field is reserved for tiebreaking
 that isn't fully wired up.
+
+### Drill-down reconciliation
+
+Every calculated figure in the UI links to the rows behind it, via `GET /transactions/query`
+(`TransactionEndpoints.GetQuery`) and the `drillTo` helper in `frontend/src/lib/drill.ts`.
+The figure and its drill-down are computed by **different code paths**, so a change to an
+aggregation silently leaves the page behind it answering a different question — this has broken
+twice (rolling category bars up to groups; the cash-flow bars). Adding or changing any aggregate
+means re-running:
+
+```bash
+node scripts/verify-drilldowns.mjs --year <year>   # needs the API running locally
+```
+
+It asserts every dashboard figure equals the total of its own drill-down, and fails the process
+on any mismatch. Add a check there for any new calculated value.

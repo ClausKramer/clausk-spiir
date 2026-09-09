@@ -15,6 +15,7 @@ public static class TransactionEndpoints
         group.MapGet("/dashboard", GetDashboard);
         group.MapGet("/by-category", GetByCategory);
         group.MapGet("/by-flow", GetByFlow);
+        group.MapGet("/query", GetQuery);
         group.MapPost("/recategorize", Recategorize);
         group.MapGet("/similar", GetSimilar);
         group.MapPost("/apply-to-similar", ApplyToSimilar);
@@ -227,6 +228,148 @@ public static class TransactionEndpoints
                 avgMonthlySurplus = avgIncome - avgExpense,
                 netBalance,
             },
+        });
+    }
+
+    // The rows behind any figure on any page. Every calculated number links here with the filters
+    // that produced it, so a total the reader doesn't believe can always be opened and counted.
+    //
+    // The filters mirror the aggregations one-for-one — same scope, same exclusions, same order —
+    // because a drill-down that doesn't reconcile with the number it came from is worse than no
+    // drill-down at all.
+    private static async Task<IResult> GetQuery(
+        TransactionRepository transactions,
+        CategoryRepository categories,
+        TagRepository tags,
+        ICurrentUser currentUser,
+        Guid[]? accountIds = null,
+        int? year = null,
+        int? month = null,
+        // "settled" is the set every dashboard figure is computed over: no matched transfers, no
+        // scheduled payments, no duplicates. The others open the rows those exclusions removed,
+        // and "balance" is the net-balance figure's own scope — everything up to today, transfers
+        // included, since a matched pair nets to zero and still belongs to what's in the account.
+        string scope = "settled",
+        Guid? categoryId = null,
+        bool uncategorized = false,
+        Guid? tagId = null,
+        string? merchant = null,
+        string? kind = null,
+        string? direction = null,
+        CancellationToken ct = default)
+    {
+        var userId = currentUser.GetRequiredUserId();
+        var allCategories = await categories.GetAllForUserAsync(userId, ct);
+        var isBalance = scope.Equals("balance", StringComparison.OrdinalIgnoreCase);
+
+        var (from, to, months) = ResolvePeriod(year, month);
+
+        List<TransactionListItem> rows;
+        if (isBalance)
+        {
+            // Net balance is not period-scoped: it's everything that has actually moved, up to
+            // today. Scoping it to the selected period would describe a different number.
+            rows = (await transactions.GetForPeriodAsync(userId, accountIds, new DateOnly(1900, 1, 1), Today.AddDays(1), ct))
+                .Where(t => !IsFuture(t))
+                .ToList();
+        }
+        else
+        {
+            var (settled, pairedIds) = await LoadWithPairingAsync(transactions, userId, accountIds, from, to, ct);
+            var inPeriod = await transactions.GetForPeriodAsync(userId, accountIds, from, to, ct);
+
+            rows = scope.ToLowerInvariant() switch
+            {
+                // Scheduled payments never reach LoadWithPairingAsync — it drops them — so this
+                // one reads the unfiltered period instead.
+                "future" => inPeriod.Where(IsFuture).ToList(),
+                "transfers" => settled.Where(t => IsTransfer(t, pairedIds)).ToList(),
+                _ => settled.Where(t => !IsTransfer(t, pairedIds)).ToList(),
+            };
+        }
+
+        // A group means the group and its leaves, same as the category page — transactions file
+        // to leaves, so matching the group alone would find nothing.
+        if (categoryId is { } cid)
+        {
+            var wanted = new HashSet<Guid>(
+                allCategories.Where(c => c.ParentCategoryId == cid).Select(c => c.Id)) { cid };
+            rows = rows.Where(t => t.CategoryId is { } c && wanted.Contains(c)).ToList();
+        }
+        else if (uncategorized)
+        {
+            rows = rows.Where(t => t.CategoryId is null).ToList();
+        }
+
+        if (kind is not null)
+        {
+            var kindById = allCategories.ToDictionary(c => c.Id, c => c.Kind);
+            rows = rows
+                .Where(t => t.CategoryId is { } c
+                            && kindById.TryGetValue(c, out var k)
+                            && k.Equals(kind, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+
+        if (merchant is not null)
+            rows = rows
+                .Where(t => MerchantNormalizer.MerchantKey(t.Description)
+                    .Equals(merchant, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+        if (direction is not null)
+        {
+            var wantIncome = direction.Equals("income", StringComparison.OrdinalIgnoreCase);
+            rows = rows.Where(t => wantIncome ? t.Amount > 0 : t.Amount < 0).ToList();
+        }
+
+        // Applied last: the tag lookup only needs the rows that survived everything else.
+        var links = await tags.GetForTransactionsAsync(userId, rows.Select(t => t.Id).ToList(), ct);
+        if (tagId is { } tid)
+            rows = rows.Where(t => links[t.Id].Any(l => l.TagId == tid)).ToList();
+
+        rows = rows.OrderByDescending(t => t.BookingDate).ThenBy(t => t.Description).ToList();
+
+        var inflow = rows.Where(t => t.Amount > 0).Sum(t => t.Amount);
+        var outflow = rows.Where(t => t.Amount < 0).Sum(t => -t.Amount);
+
+        var byMonth = rows
+            .GroupBy(t => (t.BookingDate.Year, t.BookingDate.Month))
+            .ToDictionary(g => g.Key, g => g.Sum(t => t.Amount));
+
+        // Only meaningful for a period-scoped query; the balance scope spans all history and has
+        // no fixed month count to lay out against.
+        var monthlyTotals = isBalance
+            ? []
+            : Enumerable.Range(0, months)
+                .Select(i => from.AddMonths(i))
+                .Select(d =>
+                {
+                    byMonth.TryGetValue((d.Year, d.Month), out var net);
+                    return new { d.Year, d.Month, Net = net };
+                })
+                .ToList();
+
+        return TypedResults.Ok(new
+        {
+            scope = isBalance ? "balance" : scope.ToLowerInvariant(),
+            from = isBalance ? (DateOnly?)null : from,
+            to = isBalance ? (DateOnly?)null : to,
+            year = isBalance ? (int?)null : from.Year,
+            month,
+            months = isBalance ? 0 : months,
+            // All three are returned because different figures on the pages mean different ones:
+            // an expense bar means outflow, an income bar inflow, net balance and the net line
+            // mean net. The caller displays the one it linked from.
+            net = inflow - outflow,
+            inflow,
+            outflow,
+            count = rows.Count,
+            // Months of the period that saw any of these rows — the divisor behind any figure
+            // presented as a monthly average.
+            monthsWithData = byMonth.Count,
+            monthlyTotals,
+            items = rows.Select(t => WithFlags(t, t.IsManualTransfer, links[t.Id])),
         });
     }
 

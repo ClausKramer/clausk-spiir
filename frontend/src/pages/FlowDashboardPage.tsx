@@ -1,10 +1,11 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
-import { getFlowBreakdown, type FlowDirection, type Period } from '../api/transactions'
+import { getFlowBreakdown, type FlowDirection, type Period, type TransactionQuery } from '../api/transactions'
 import { getBankAccounts } from '../api/accounts'
 import { CategoryPicker } from '../components/CategoryPicker'
 import { TagEditor } from '../components/TagEditor'
 import { MONTH_NAMES, periodLabel } from '../lib/period'
+import { drillTo } from '../lib/drill'
 
 // Same steps the cash flow chart uses, and validated with it against this surface. Income and
 // expenses never appear together on this page — it is one direction at a time — so the accent
@@ -37,6 +38,13 @@ export function FlowDashboardPage() {
     queryKey: ['by-flow', direction, accountIds, period],
     queryFn: () => getFlowBreakdown(direction, accountIds, period),
   })
+
+  // Every figure here keeps the page's own direction, so a merchant or tag total means "of this
+  // month's income" (or spending) — the same thing the number on screen counts.
+  const drill = (text: string, query: TransactionQuery, accountOverride?: string[]) =>
+    drillTo(text, { ...query, direction }, accountOverride ?? accountIds, period, {
+      measure: isIncome ? 'inflow' : 'outflow',
+    })
 
   const maxCategory = Math.max(...(data?.byCategory.map((c) => c.total) ?? [0]), 1)
   const maxSource = Math.max(...(data?.bySource.map((s) => s.total) ?? [0]), 1)
@@ -177,8 +185,13 @@ export function FlowDashboardPage() {
             <Panel title={isIncome ? '💼 Where it comes from' : '🏬 Where it goes'}>
               <div className="space-y-1.5">
                 {data.bySource.slice(0, 12).map((s) => (
-                  <div key={s.merchant} className="flex items-center gap-2.5">
-                    <div className="w-40 shrink-0 truncate text-right text-xs text-slate-400" title={s.merchant}>
+                  <Link
+                    key={s.merchant}
+                    to={drill(s.merchant, { merchant: s.merchant })}
+                    className="-mx-1 flex items-center gap-2.5 rounded px-1 hover:bg-white/[0.03]"
+                    title={`Show the ${s.merchant} transactions`}
+                  >
+                    <div className="w-40 shrink-0 truncate text-right text-xs text-slate-400">
                       {s.merchant}
                     </div>
                     <div className="h-[22px] flex-1 overflow-hidden rounded bg-[#1e2535]">
@@ -194,7 +207,7 @@ export function FlowDashboardPage() {
                     <div className="w-24 shrink-0 text-right text-[0.7rem] tabular-nums text-slate-500">
                       {s.count}× · {kr(s.average)}
                     </div>
-                  </div>
+                  </Link>
                 ))}
                 {data.bySource.length > 12 && (
                   <p className="pt-1 text-center text-xs text-slate-600">
@@ -208,13 +221,17 @@ export function FlowDashboardPage() {
               <Panel title="🏦 By account">
                 <div className="flex flex-wrap gap-2">
                   {data.byAccount.map((a) => (
-                    <div key={a.bankAccountId} className="rounded-lg border border-[#1e2535] bg-[#111620] px-3 py-2">
+                    <Link
+                      key={a.bankAccountId}
+                      to={drill(accountNameById.get(a.bankAccountId) ?? 'Account', {}, [a.bankAccountId])}
+                      className="rounded-lg border border-[#1e2535] bg-[#111620] px-3 py-2 hover:border-slate-600"
+                    >
                       <div className="text-[0.68rem] text-slate-500">
                         {accountNameById.get(a.bankAccountId) ?? 'Unknown account'}
                       </div>
                       <div className="mt-0.5 text-sm font-semibold tabular-nums text-slate-200">{kr(a.total)}</div>
                       <div className="text-[0.62rem] text-slate-600">{a.count} transactions</div>
-                    </div>
+                    </Link>
                   ))}
                 </div>
               </Panel>
@@ -227,13 +244,17 @@ export function FlowDashboardPage() {
                 </p>
                 <div className="flex flex-wrap gap-2">
                   {data.tagBreakdown.map((tag) => (
-                    <div key={tag.tagId} className="rounded-lg border border-violet-500/25 bg-violet-500/10 px-3 py-2">
+                    <Link
+                      key={tag.tagId}
+                      to={drill(tag.name, { tagId: tag.tagId })}
+                      className="rounded-lg border border-violet-500/25 bg-violet-500/10 px-3 py-2 hover:border-violet-400/50"
+                    >
                       <div className="text-[0.68rem] font-medium text-violet-300">{tag.name}</div>
                       <div className="mt-0.5 text-sm font-semibold tabular-nums text-slate-200">
                         {kr(Math.abs(tag.total))}
                       </div>
                       <div className="text-[0.62rem] text-slate-500">{tag.count} transactions</div>
-                    </div>
+                    </Link>
                   ))}
                 </div>
               </Panel>

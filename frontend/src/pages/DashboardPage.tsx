@@ -2,7 +2,14 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from 'react-router-dom'
 import { useMe, useLogout } from '../hooks/useAuth'
-import { getTransactions, getDashboard, markTransfer, type Period, type Transaction } from '../api/transactions'
+import {
+  getTransactions,
+  getDashboard,
+  markTransfer,
+  type Period,
+  type Transaction,
+  type TransactionQuery,
+} from '../api/transactions'
 import { MarkTransferDialog } from '../components/MarkTransferDialog'
 import { getBankAccounts } from '../api/accounts'
 import { CategoryPicker } from '../components/CategoryPicker'
@@ -10,6 +17,7 @@ import { TagEditor } from '../components/TagEditor'
 import { CashFlowChart } from '../components/CashFlowChart'
 import { PeriodNavigator } from '../components/PeriodNavigator'
 import { periodLabel, MONTH_NAMES } from '../lib/period'
+import { drillTo, type Measure } from '../lib/drill'
 
 const CATEGORY_COLORS = [
   '#ef4444', '#f97316', '#eab308', '#3b82f6', '#6366f1',
@@ -135,6 +143,31 @@ export function DashboardPage() {
 
   const label = periodLabel(period)
 
+  // Every calculated figure on this page is openable. One helper so the page's account filter
+  // and period always travel with the link and the drill-down describes the same slice.
+  const drill = (
+    text: string,
+    query: TransactionQuery,
+    measure: Measure,
+    month?: { year: number; month: number },
+  ) => drillTo(text, query, accountIdsParam, period, { measure, month })
+
+  // Income and expense figures for one month go to the flow page, the same destination the
+  // chart's bars use, so the two views of the same data don't lead to different places.
+  const monthFlowLink = (dir: 'income' | 'expense', m: { year: number; month: number }) => {
+    const p = new URLSearchParams()
+    p.set('year', String(m.year))
+    p.set('month', String(m.month))
+    accountIdsParam.forEach((id) => p.append('accountIds', id))
+    return `/flow/${dir}?${p.toString()}`
+  }
+
+  // Unfiled isn't a Kind — it's the absence of one — so it filters on "no category" instead.
+  const kindDrill = (slot: { key: string; label: string }) =>
+    slot.key === 'uncategorized'
+      ? drill('Unfiled spending', { uncategorized: true, direction: 'expense' }, 'outflow')
+      : drill(`${slot.label} spending`, { kind: slot.label, direction: 'expense' }, 'outflow')
+
   const kpis = dashboard?.kpis
   const netBalancePositive = (kpis?.netBalance ?? 0) >= 0
   const surplusPositive = (kpis?.avgMonthlySurplus ?? 0) >= 0
@@ -227,13 +260,26 @@ export function DashboardPage() {
           <>
             {/* KPI cards */}
             <div className="mb-5 grid grid-cols-2 md:grid-cols-4 gap-3">
-              <Kpi label="Avg. monthly income" value={dkk(kpis?.avgMonthlyIncome ?? 0)} valueClass="text-emerald-400" loading={dashboardLoading} />
-              <Kpi label="Avg. monthly expenses" value={dkk(-(kpis?.avgMonthlyExpense ?? 0))} valueClass="text-red-400" loading={dashboardLoading} />
+              <Kpi
+                label="Avg. monthly income"
+                value={dkk(kpis?.avgMonthlyIncome ?? 0)}
+                valueClass="text-emerald-400"
+                loading={dashboardLoading}
+                to={drill('All income', { direction: 'income' }, 'inflow')}
+              />
+              <Kpi
+                label="Avg. monthly expenses"
+                value={dkk(-(kpis?.avgMonthlyExpense ?? 0))}
+                valueClass="text-red-400"
+                loading={dashboardLoading}
+                to={drill('All spending', { direction: 'expense' }, 'outflow')}
+              />
               <Kpi
                 label="Avg. monthly surplus"
                 value={dkk(kpis?.avgMonthlySurplus ?? 0)}
                 valueClass={surplusPositive ? 'text-amber-400' : 'text-red-400'}
                 loading={dashboardLoading}
+                to={drill('Income and spending', {}, 'net')}
               />
               <Kpi
                 label="Net balance (tracked)"
@@ -241,6 +287,7 @@ export function DashboardPage() {
                 valueClass={netBalancePositive ? 'text-emerald-400' : 'text-red-400'}
                 sub="Sum of synced transactions"
                 loading={dashboardLoading}
+                to={drill('Net balance', { scope: 'balance' }, 'net')}
               />
             </div>
 
@@ -281,15 +328,36 @@ export function DashboardPage() {
                 />
               ) : (
                 <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+                  {/* The cards view is this chart's table view, so each figure opens the same
+                      rows its bar does — income and expenses to the flow page the bars use,
+                      net to the generic view, since no bar represents it. */}
                   {dashboard?.monthlyFlow.map((m) => (
                     <div key={`${m.year}-${m.month}`} className="rounded-lg border border-[#1e2535] bg-[#111620] px-2.5 py-3 text-center">
                       <div className="text-[0.65rem] uppercase text-slate-600 mb-1.5">{MONTH_NAMES[m.month - 1]}</div>
-                      <div className="text-xs font-semibold text-emerald-400">+{Math.round(m.income).toLocaleString('da-DK')}</div>
-                      <div className="text-xs font-semibold text-red-400">−{Math.round(m.expense).toLocaleString('da-DK')}</div>
-                      <div className={`mt-1 text-[0.7rem] font-semibold ${m.net >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                      <Link
+                        to={monthFlowLink('income', m)}
+                        className="block text-xs font-semibold text-emerald-400 hover:underline"
+                      >
+                        +{Math.round(m.income).toLocaleString('da-DK')}
+                      </Link>
+                      <Link
+                        to={monthFlowLink('expense', m)}
+                        className="block text-xs font-semibold text-red-400 hover:underline"
+                      >
+                        −{Math.round(m.expense).toLocaleString('da-DK')}
+                      </Link>
+                      <Link
+                        to={drill(
+                          `${MONTH_NAMES[m.month - 1]} ${m.year}`,
+                          {},
+                          'net',
+                          { year: m.year, month: m.month },
+                        )}
+                        className={`mt-1 block text-[0.7rem] font-semibold hover:underline ${m.net >= 0 ? 'text-emerald-400' : 'text-red-400'}`}
+                      >
                         {m.net >= 0 ? '+' : ''}
                         {Math.round(m.net).toLocaleString('da-DK')}
-                      </div>
+                      </Link>
                     </div>
                   ))}
                 </div>
@@ -341,7 +409,11 @@ export function DashboardPage() {
                         return (
                           <Link
                             key={row.categoryId ?? 'none'}
-                            to={`/spending/${row.categoryId ?? 'uncategorized'}?${categoryLinkParams}`}
+                            to={
+                              row.categoryId
+                                ? `/spending/${row.categoryId}?${categoryLinkParams}`
+                                : drill('Uncategorized spending', { uncategorized: true, direction: 'expense' }, 'outflow')
+                            }
                             className="flex w-full items-center gap-2.5 rounded text-left hover:bg-white/[0.03] focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
                             title={`Open the ${row.categoryName ?? 'uncategorized'} breakdown`}
                           >
@@ -386,14 +458,25 @@ export function DashboardPage() {
                   <Spinner />
                 ) : (
                   <div className="rounded-lg border border-[#1e2535] bg-[#111620] px-3.5 py-3 text-sm">
-                    <FlowRow label="Avg. income" value={dkk(kpis?.avgMonthlyIncome ?? 0)} valueClass="text-emerald-400" />
-                    <FlowRow label="Avg. expenses" value={dkk(-(kpis?.avgMonthlyExpense ?? 0))} valueClass="text-red-400" />
+                    <FlowRow
+                      label="Avg. income"
+                      value={dkk(kpis?.avgMonthlyIncome ?? 0)}
+                      valueClass="text-emerald-400"
+                      to={drill('All income', { direction: 'income' }, 'inflow')}
+                    />
+                    <FlowRow
+                      label="Avg. expenses"
+                      value={dkk(-(kpis?.avgMonthlyExpense ?? 0))}
+                      valueClass="text-red-400"
+                      to={drill('All spending', { direction: 'expense' }, 'outflow')}
+                    />
                     <div className="mt-1.5 border-t border-slate-700 pt-1.5">
                       <FlowRow
                         label="Avg. surplus"
                         value={`${surplusPositive ? '+' : ''}${dkk(kpis?.avgMonthlySurplus ?? 0)}`}
                         valueClass={surplusPositive ? 'text-emerald-400' : 'text-red-400'}
                         bold
+                        to={drill('Income and spending', {}, 'net')}
                       />
                     </div>
                   </div>
@@ -413,31 +496,37 @@ export function DashboardPage() {
                         commitment they are. 2px surface gaps keep the segments readable. */}
                     <div className="flex h-8 gap-0.5 overflow-hidden rounded">
                       {kindSlots.map((s) => (
-                        <div
+                        <Link
                           key={s.key}
+                          to={kindDrill(s)}
                           className="flex items-center justify-center first:rounded-l last:rounded-r"
                           style={{ width: `${(s.value / kindTotal) * 100}%`, background: s.color }}
-                          title={`${s.label}: ${dkk(s.value)}`}
+                          title={`${s.label}: ${dkk(s.value)} — click to see the transactions`}
                         >
                           {s.value / kindTotal > 0.11 && (
                             <span className="text-[0.68rem] font-semibold text-white/95">
                               {Math.round((s.value / kindTotal) * 100)}%
                             </span>
                           )}
-                        </div>
+                        </Link>
                       ))}
                     </div>
 
                     <dl className="mt-3 space-y-1.5">
                       {kindSlots.map((s) => (
-                        <div key={s.key} className="flex items-center gap-2 text-xs" title={s.hint}>
+                        <Link
+                          key={s.key}
+                          to={kindDrill(s)}
+                          className="-mx-1 flex items-center gap-2 rounded px-1 text-xs hover:bg-white/[0.04]"
+                          title={s.hint}
+                        >
                           <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: s.color }} />
                           <dt className="flex-1 text-slate-400">{s.label}</dt>
                           <dd className="tabular-nums font-semibold text-slate-200">{dkk(s.value)}</dd>
                           <dd className="w-10 text-right tabular-nums text-slate-600">
                             {Math.round((s.value / kindTotal) * 100)}%
                           </dd>
-                        </div>
+                        </Link>
                       ))}
                     </dl>
                   </>
@@ -455,8 +544,13 @@ export function DashboardPage() {
                 ) : (
                   <div className="space-y-2">
                     {tagRows.slice(0, 9).map((tag) => (
-                      <div key={tag.tagId} className="flex items-center gap-2.5">
-                        <div className="w-28 shrink-0 truncate text-right text-xs text-slate-400" title={tag.name}>
+                      <Link
+                        key={tag.tagId}
+                        to={drill(tag.name, { tagId: tag.tagId, direction: 'expense' }, 'outflow')}
+                        className="-mx-1 flex items-center gap-2.5 rounded px-1 hover:bg-white/[0.04]"
+                        title={`Show the transactions tagged ${tag.name}`}
+                      >
+                        <div className="w-28 shrink-0 truncate text-right text-xs text-slate-400">
                           {tag.name}
                         </div>
                         <div className="h-[22px] flex-1 overflow-hidden rounded bg-[#1e2535]">
@@ -472,7 +566,7 @@ export function DashboardPage() {
                         <span className="w-10 shrink-0 text-right text-[0.7rem] tabular-nums text-slate-600">
                           {tag.count}×
                         </span>
-                      </div>
+                      </Link>
                     ))}
                   </div>
                 )}
@@ -481,14 +575,33 @@ export function DashboardPage() {
 
             {/* Transactions */}
             <Section
-              title={(() => {
-                // Transfers stay listed but marked; scheduled payments aren't listed here at all,
-                // so the wording distinguishes them rather than lumping both under "not counted".
-                const notes = []
-                if (dashboard?.excludedTransfers) notes.push(`${dashboard.excludedTransfers} transfer legs marked`)
-                if (dashboard?.excludedFuture) notes.push(`${dashboard.excludedFuture} scheduled hidden`)
-                return notes.length > 0 ? `📋 Transactions — ${notes.join(', ')}` : '📋 Transactions'
-              })()}
+              title="📋 Transactions"
+              // Transfers stay listed but marked; scheduled payments aren't listed here at all,
+              // so the wording distinguishes them rather than lumping both under "not counted".
+              // Both counts open the rows they describe — a figure saying what was left out is
+              // no use unless you can see what that was.
+              action={
+                (dashboard?.excludedTransfers || dashboard?.excludedFuture) ? (
+                  <div className="flex flex-wrap items-center gap-3 text-[0.7rem]">
+                    {dashboard.excludedTransfers > 0 && (
+                      <Link
+                        to={drill('Internal transfers', { scope: 'transfers' }, 'net')}
+                        className="text-sky-400 hover:underline"
+                      >
+                        {dashboard.excludedTransfers} transfer legs marked
+                      </Link>
+                    )}
+                    {dashboard.excludedFuture > 0 && (
+                      <Link
+                        to={drill('Scheduled payments', { scope: 'future' }, 'net')}
+                        className="text-amber-400 hover:underline"
+                      >
+                        {dashboard.excludedFuture} scheduled hidden
+                      </Link>
+                    )}
+                  </div>
+                ) : undefined
+              }
             >
               {txLoading ? (
                 <Spinner />
@@ -589,13 +702,42 @@ export function DashboardPage() {
   )
 }
 
-function Kpi({ label, value, valueClass, sub, loading }: { label: string; value: string; valueClass: string; sub?: string; loading?: boolean }) {
-  return (
-    <div className="rounded-xl border border-[#232b3b] bg-[#1a1f2e] px-4 py-3.5">
+// `to` makes the figure openable — every calculated number on this page has one, so any total
+// can be counted rather than taken on trust.
+function Kpi({
+  label,
+  value,
+  valueClass,
+  sub,
+  loading,
+  to,
+}: {
+  label: string
+  value: string
+  valueClass: string
+  sub?: string
+  loading?: boolean
+  to?: string
+}) {
+  const body = (
+    <>
       <div className="text-[0.68rem] uppercase tracking-wider text-slate-600 mb-1.5">{label}</div>
       <div className={`text-xl font-bold tabular-nums ${valueClass}`}>{loading ? '—' : value}</div>
       {sub && <div className="mt-1 text-[0.68rem] text-slate-600">{sub}</div>}
-    </div>
+    </>
+  )
+  const base = 'block rounded-xl border border-[#232b3b] bg-[#1a1f2e] px-4 py-3.5'
+
+  return to ? (
+    <Link
+      to={to}
+      className={`${base} transition-colors hover:border-slate-600 hover:bg-[#1e2433] focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500`}
+      title={`Show the transactions behind ${label.toLowerCase()}`}
+    >
+      {body}
+    </Link>
+  ) : (
+    <div className={base}>{body}</div>
   )
 }
 
@@ -611,12 +753,33 @@ function Section({ title, action, children }: { title: string; action?: React.Re
   )
 }
 
-function FlowRow({ label, value, valueClass, bold }: { label: string; value: string; valueClass: string; bold?: boolean }) {
-  return (
-    <div className={`flex justify-between py-0.5 ${bold ? 'font-bold text-[0.9rem]' : 'text-slate-400'}`}>
+function FlowRow({
+  label,
+  value,
+  valueClass,
+  bold,
+  to,
+}: {
+  label: string
+  value: string
+  valueClass: string
+  bold?: boolean
+  to?: string
+}) {
+  const cls = `flex justify-between py-0.5 ${bold ? 'font-bold text-[0.9rem]' : 'text-slate-400'}`
+  const body = (
+    <>
       <span>{label}</span>
       <span className={valueClass}>{value}</span>
-    </div>
+    </>
+  )
+
+  return to ? (
+    <Link to={to} className={`${cls} -mx-1 rounded px-1 hover:bg-white/[0.04]`} title={`Show the transactions behind ${label.toLowerCase()}`}>
+      {body}
+    </Link>
+  ) : (
+    <div className={cls}>{body}</div>
   )
 }
 

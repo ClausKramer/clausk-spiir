@@ -8,7 +8,7 @@ import { TagEditor } from '../components/TagEditor'
 import { readPeriod, currentMonth, periodLabel, MONTH_NAMES } from '../lib/period'
 import { drillTo, dashboardLink } from '../lib/drill'
 import { BarRow } from '../components/BarRow'
-import { EXPENSE, INCOME, NEUTRAL, SURFACE, forAmount } from '../lib/chartColors'
+import { INCOME, NEUTRAL, SURFACE, KIND_NONE, buildCategoryColors } from '../lib/chartColors'
 
 const kr = (n: number) =>
   n.toLocaleString('da-DK', { style: 'currency', currency: 'DKK', maximumFractionDigits: 0 })
@@ -34,6 +34,11 @@ export function CategoryDashboardPage() {
     queryKey: ['by-category', categoryId, accountIds, period],
     queryFn: () => getTransactionsByCategory(categoryId, accountIds, period),
   })
+
+  // The colour of the bar that opened this page, so the connection is visible rather than
+  // something the reader has to take on trust.
+  const categoryColors = buildCategoryColors(categories)
+  const accent = (categoryId && categoryColors.get(categoryId)) || KIND_NONE
 
   const category = categories.find((c) => c.id === categoryId)
   const title = categoryId === null ? '— Uncategorized' : `${category?.emoji ?? ''} ${category?.name ?? 'Category'}`.trim()
@@ -120,7 +125,7 @@ export function CategoryDashboardPage() {
                   {recurringShare > 0 && (
                     <div
                       className="flex items-center justify-center text-[0.65rem] font-semibold text-white/95"
-                      style={{ width: `${recurringShare * 100}%`, background: EXPENSE }}
+                      style={{ width: `${recurringShare * 100}%`, background: accent }}
                     >
                       {recurringShare > 0.12 && `${Math.round(recurringShare * 100)}%`}
                     </div>
@@ -137,7 +142,7 @@ export function CategoryDashboardPage() {
                 </div>
                 <div className="mt-2 flex flex-wrap justify-center gap-4 text-xs text-slate-400">
                   <span className="flex items-center gap-1.5">
-                    <span className="h-2.5 w-2.5 rounded-sm" style={{ background: EXPENSE }} />
+                    <span className="h-2.5 w-2.5 rounded-sm" style={{ background: accent }} />
                     Recurring {kr(data.stats.recurringTotal)}
                   </span>
                   <span className="flex items-center gap-1.5">
@@ -172,7 +177,7 @@ export function CategoryDashboardPage() {
                         style={{
                           height: `${(Math.abs(m.total) / maxMonth) * 100}%`,
                           minHeight: m.total !== 0 ? 2 : 0,
-                          background: m.total < 0 ? INCOME : EXPENSE,
+                          background: m.total < 0 ? INCOME : accent,
                         }}
                       />
                     </div>
@@ -207,7 +212,7 @@ export function CategoryDashboardPage() {
                       // the refund colour.
                       fraction={Math.abs(child.total) / maxChild}
                       amount={kr(child.total)}
-                      color={forAmount(child.total)}
+                      color={child.total < 0 ? INCOME : accent}
                       meta={`${child.count}×`}
                       metaWidth="w-16"
                       to={child.categoryId ? `/spending/${child.categoryId}?${search.toString()}` : undefined}
@@ -233,7 +238,7 @@ export function CategoryDashboardPage() {
                     }
                     fraction={Math.abs(m.total) / maxMerchant}
                     amount={kr(m.total)}
-                    color={forAmount(m.total)}
+                    color={m.total < 0 ? INCOME : accent}
                     meta={
                       <>
                         {m.count}× · {kr(m.average)}

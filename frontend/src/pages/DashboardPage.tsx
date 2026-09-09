@@ -19,7 +19,8 @@ import { PeriodNavigator } from '../components/PeriodNavigator'
 import { periodLabel, MONTH_NAMES, readPeriod, writePeriod, currentMonth } from '../lib/period'
 import { drillTo, type Measure } from '../lib/drill'
 import { BarRow } from '../components/BarRow'
-import { EXPENSE, TAG, KIND_FIXED, KIND_VARIABLE, KIND_SAVINGS, KIND_DEBT, KIND_NONE } from '../lib/chartColors'
+import { TAG, KIND_FIXED, KIND_VARIABLE, KIND_SAVINGS, KIND_DEBT, KIND_NONE, buildCategoryColors } from '../lib/chartColors'
+import { getCategories } from '../api/categories'
 
 // Validated as a categorical set against the #111620 panel surface (lightness band, chroma,
 // CVD separation, normal-vision floor, contrast). Uncategorized is deliberately outside the
@@ -108,6 +109,15 @@ export function DashboardPage() {
     enabled: !noneSelected,
     placeholderData: (prev) => prev,
   })
+
+  // Keyed on the category, not on its rank, so a bar keeps its colour when the period changes
+  // and the page it opens is the same colour as the bar that opened it.
+  const { data: allCategories = [] } = useQuery({
+    queryKey: ['categories'],
+    queryFn: getCategories,
+    staleTime: 5 * 60 * 1000,
+  })
+  const categoryColors = buildCategoryColors(allCategories)
 
   const categoryRows = dashboard?.categoryBreakdown.filter((r) => r.total > 0) ?? []
   const maxCategory = categoryRows.length > 0 ? Math.max(...categoryRows.map((r) => r.total)) : 1
@@ -446,7 +456,9 @@ export function DashboardPage() {
                             // of the chart is unchanged.
                             fraction={row.total / maxCategory}
                             amount={dkk(amount)}
-                            color={EXPENSE}
+                            // Uncategorized has no identity to carry, so it takes the neutral
+                            // grey used for "unfiled" throughout.
+                            color={(row.categoryId && categoryColors.get(row.categoryId)) || KIND_NONE}
                             meta="›"
                             metaWidth="w-4"
                             to={

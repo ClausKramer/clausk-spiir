@@ -7,7 +7,8 @@ import { TagEditor } from '../components/TagEditor'
 import { MONTH_NAMES, periodLabel, readPeriod, currentMonth } from '../lib/period'
 import { drillTo, dashboardLink } from '../lib/drill'
 import { BarRow } from '../components/BarRow'
-import { INCOME, EXPENSE } from '../lib/chartColors'
+import { INCOME, EXPENSE, KIND_NONE, buildCategoryColors } from '../lib/chartColors'
+import { getCategories } from '../api/categories'
 
 const kr = (n: number) =>
   n.toLocaleString('da-DK', { style: 'currency', currency: 'DKK', maximumFractionDigits: 0 })
@@ -25,6 +26,14 @@ export function FlowDashboardPage() {
   const label = periodLabel(period)
 
   const { data: accounts = [] } = useQuery({ queryKey: ['accounts'], queryFn: getBankAccounts })
+  // Same category colours as the dashboard, so the "by category" panel here and the one on the
+  // front page are visibly the same breakdown rather than two unrelated charts.
+  const { data: allCategories = [] } = useQuery({
+    queryKey: ['categories'],
+    queryFn: getCategories,
+    staleTime: 5 * 60 * 1000,
+  })
+  const categoryColors = buildCategoryColors(allCategories)
   const accountNameById = new Map(accounts.map((a) => [a.id, a.name]))
 
   const { data, isLoading } = useQuery({
@@ -145,7 +154,7 @@ export function FlowDashboardPage() {
                     }
                     fraction={c.total / maxCategory}
                     amount={kr(c.total)}
-                    color={accent}
+                    color={(c.categoryId && categoryColors.get(c.categoryId)) || KIND_NONE}
                     meta={`${c.count}×`}
                     metaWidth="w-12"
                     // Uncategorized has no category page to open — there is no category behind

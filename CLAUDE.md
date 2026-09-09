@@ -241,8 +241,10 @@ node --experimental-strip-types scripts/verify-url-state.mjs
 ### Charts
 
 Colours live only in `frontend/src/lib/chartColors.ts` — never inline hexes in a component.
-Colour means direction or kind, never rank: a bar's colour follows the thing it represents, so
-re-sorting or filtering never repaints it. Validation is per *co-occurring set* (the marks a
+Colour means direction, kind or identity, never rank: a category's colour comes from
+`buildCategoryColors`, keyed on its place in the user's full category list, so the bar you click
+on the dashboard is the colour of the page it opens and changing the period repaints nothing.
+Callers must pass the complete list from `/categories`, not the chart's own rows. Validation is per *co-occurring set* (the marks a
 reader can compare in one chart), not over the union of every colour in the app:
 
 ```bash
@@ -255,4 +257,8 @@ moves outside it. Never reintroduce a percentage floor: an 8% floor drew a 0.5% 
 
 ```bash
 node scripts/verify-bar-scales.mjs --year <year>   # needs the API running locally
+```
+
+```bash
+node --experimental-strip-types scripts/verify-category-colors.mjs
 ```

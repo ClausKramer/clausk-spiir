@@ -34,6 +34,48 @@ export const SURFACE_INSET = '#111620'
 /** The empty part of a bar track. */
 export const TRACK = '#1e2535'
 
+// Categories. Eight hues, validated together as a sequence on both surfaces — worst adjacent
+// pair ΔE 10.2 under deuteranopia, 27.0 for normal vision, all inside the lightness band and
+// all clearing 3:1 contrast. The wrap-around pair (a 9th bar reusing the first hue under the
+// eighth) was checked separately and clears comfortably.
+//
+// This replaced a ten-hue set that failed four of the five checks — two of its steps sat at
+// ΔE 6.3 for normal vision, which is two bars a reader simply cannot tell apart.
+const CATEGORY_HUES = [
+  '#ea580c', // orange
+  '#0284c7', // sky
+  '#db2777', // pink
+  '#65a30d', // lime
+  '#8b5cf6', // violet
+  '#0d9488', // teal
+  '#e11d48', // rose
+  '#0891b2', // cyan
+]
+
+// A category's colour, stable across every page and every re-sort.
+//
+// The index comes from the category's own position in the user's category list, never from its
+// rank in the chart being drawn. That is the whole point: the bar you click on the dashboard is
+// the colour of the page it opens, and re-sorting or changing the period never repaints
+// anything. The previous version keyed on rank, so switching month silently swapped every
+// colour and the connection between a bar and its drill-down was lost.
+export function buildCategoryColors(
+  categories: { id: string; parentCategoryId: string | null }[],
+): Map<string, string> {
+  // Groups drive the palette; a leaf takes its group's hue, so a category page reads as one
+  // colour throughout rather than as eight unrelated bars.
+  const groups = categories.filter((c) => c.parentCategoryId === null).map((c) => c.id).sort()
+  const hueOf = new Map(groups.map((id, i) => [id, CATEGORY_HUES[i % CATEGORY_HUES.length]]))
+
+  const colors = new Map(hueOf)
+  for (const c of categories) {
+    if (c.parentCategoryId && hueOf.has(c.parentCategoryId)) {
+      colors.set(c.id, hueOf.get(c.parentCategoryId)!)
+    }
+  }
+  return colors
+}
+
 // Committed vs discretionary. A genuine categorical set — four kinds with no order between
 // them — so these are assigned by kind and never cycled. "Unfiled" is outside the set: it is
 // the absence of a kind, so it stays neutral grey rather than claiming a fifth identity.

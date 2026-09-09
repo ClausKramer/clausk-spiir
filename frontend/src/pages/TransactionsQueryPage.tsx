@@ -31,6 +31,7 @@ export function TransactionsQueryPage() {
     merchant: search.get('merchant') ?? undefined,
     kind: search.get('kind') ?? undefined,
     direction: (search.get('direction') as TransactionQuery['direction']) ?? undefined,
+    day: search.get('day') ? Number(search.get('day')) : undefined,
   }
 
   const { data: accounts = [] } = useQuery({ queryKey: ['accounts'], queryFn: getBankAccounts })

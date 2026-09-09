@@ -185,6 +185,13 @@ export interface DashboardData {
   // Months of the period that actually saw spending — the divisor for per-month averages, so a
   // half-elapsed year isn't averaged against months that haven't happened.
   monthsWithData: number
+  // Day-by-day spending for the burn chart. Only populated for a single-month period — across
+  // a year "the 3rd" is twelve different days.
+  dailySpending: { day: number; amount: number }[]
+  daysInMonth: number
+  // Days of the month that have happened. Equals daysInMonth for a month already finished, and
+  // is what the daily average divides by — dividing a half-elapsed month by 31 would halve it.
+  elapsedDays: number
   monthlyFlow: MonthlyFlow[]
   // Rolled up to top-level groups; the category page breaks a group back into its leaves.
   categoryBreakdown: SpendingRow[]
@@ -286,6 +293,8 @@ export interface TransactionQuery {
   merchant?: string
   kind?: string
   direction?: FlowDirection
+  // A single day of the selected month, for the daily burn chart's bars.
+  day?: number
 }
 
 export interface QueryResult {

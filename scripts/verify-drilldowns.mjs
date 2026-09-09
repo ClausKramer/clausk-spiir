@@ -105,6 +105,32 @@ for (const tag of dash.tagBreakdown) {
   check(`tag ${tag.name}`, tag.total, `/transactions/query?${Y}&tagId=${tag.tagId}&direction=expense`, 'outflow')
 }
 
+console.log('Daily burn chart')
+for (const m of dash.monthlyFlow.filter((m) => m.expense > 0)) {
+  const month = get(`/transactions/dashboard?year=${m.year}&month=${m.month}`)
+  const label = `${m.year}-${String(m.month).padStart(2, '0')}`
+  // The bars must account for the whole month's spending — a day-level chart that quietly
+  // dropped rows would look perfectly normal.
+  const sum = month.dailySpending.reduce((s, d) => s + d.amount, 0)
+  check(`${label} daily bars sum to the month`, m.expense, `/transactions/query?year=${m.year}&month=${m.month}&direction=expense`, 'outflow')
+  if (Math.abs(sum - m.expense) >= 0.01) {
+    failures.push({ name: `${label} dailySpending sum`, expected: m.expense, got: sum })
+    console.log(`  FAIL ${label} dailySpending sums to ${Math.round(sum)}, month is ${Math.round(m.expense)}`)
+  } else {
+    pass++
+    console.log(`  ok   ${`${label} dailySpending sum`.padEnd(34)} ${String(Math.round(sum)).padStart(9)}`)
+  }
+  // And each bar must equal its own drill-down.
+  for (const d of month.dailySpending.filter((d) => d.amount > 0)) {
+    check(
+      `${label} day ${d.day}`,
+      d.amount,
+      `/transactions/query?year=${m.year}&month=${m.month}&day=${d.day}&direction=expense`,
+      'outflow',
+    )
+  }
+}
+
 console.log('Exclusion counts')
 checkCount('excluded transfers', dash.excludedTransfers, `/transactions/query?${Y}&scope=transfers`)
 checkCount('excluded scheduled', dash.excludedFuture, `/transactions/query?${Y}&scope=future`)

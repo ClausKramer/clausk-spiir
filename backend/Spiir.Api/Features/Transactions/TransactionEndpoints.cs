@@ -191,6 +191,30 @@ public static class TransactionEndpoints
         var avgIncome = monthlyFlow.Count > 0 ? monthlyFlow.Average(m => m.Income) : 0m;
         var avgExpense = monthlyFlow.Count > 0 ? monthlyFlow.Average(m => m.Expense) : 0m;
 
+        // Day-by-day spending, for the burn chart. Only meaningful over a single month — across
+        // a year "the 3rd" is twelve different days — so it's empty otherwise.
+        var daysInMonth = DateTime.DaysInMonth(from.Year, from.Month);
+        var dailySpending = month is null
+            ? []
+            : Enumerable.Range(1, daysInMonth)
+                .Select(day => new
+                {
+                    Day = day,
+                    Amount = spending
+                        .Where(t => t.Amount < 0 && t.BookingDate.Day == day)
+                        .Sum(t => -t.Amount),
+                })
+                .ToList();
+
+        // How much of the month has actually happened. A past month is complete; the current one
+        // is elapsed up to today, and only that part may be averaged or projected from — dividing
+        // a half-finished month by 31 would understate the daily rate by half.
+        var elapsedDays = month is null
+            ? 0
+            : Today.Year == from.Year && Today.Month == from.Month ? Today.Day
+            : Today > new DateOnly(from.Year, from.Month, daysInMonth) ? daysInMonth
+            : 0;
+
         // Months of the period that actually saw spending. Per-month averages divide by this
         // rather than by the period length: a year that's only half elapsed would otherwise be
         // averaged against months that haven't happened, halving every figure.
@@ -208,6 +232,9 @@ public static class TransactionEndpoints
             month,
             months,
             monthsWithData,
+            dailySpending,
+            daysInMonth = month is null ? 0 : daysInMonth,
+            elapsedDays,
             // Always includes the selected year even if it has no transactions yet, so the picker
             // can't end up unable to represent its own current selection.
             availableYears = availableYears.Append(from.Year).Distinct().OrderDescending().ToList(),
@@ -256,6 +283,8 @@ public static class TransactionEndpoints
         string? merchant = null,
         string? kind = null,
         string? direction = null,
+        // A single day of the month, for the daily burn chart's bars.
+        int? day = null,
         CancellationToken ct = default)
     {
         var userId = currentUser.GetRequiredUserId();
@@ -316,6 +345,9 @@ public static class TransactionEndpoints
                 .Where(t => MerchantNormalizer.MerchantKey(t.Description)
                     .Equals(merchant, StringComparison.OrdinalIgnoreCase))
                 .ToList();
+
+        if (day is not null)
+            rows = rows.Where(t => t.BookingDate.Day == day).ToList();
 
         if (direction is not null)
         {

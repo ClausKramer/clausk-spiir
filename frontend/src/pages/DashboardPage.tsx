@@ -15,6 +15,7 @@ import { getBankAccounts } from '../api/accounts'
 import { CategoryPicker } from '../components/CategoryPicker'
 import { TagEditor } from '../components/TagEditor'
 import { CashFlowChart } from '../components/CashFlowChart'
+import { DailySpendChart } from '../components/DailySpendChart'
 import { PeriodNavigator } from '../components/PeriodNavigator'
 import { periodLabel, MONTH_NAMES, readPeriod, writePeriod, currentMonth } from '../lib/period'
 import { drillTo, type Measure } from '../lib/drill'
@@ -325,6 +326,24 @@ export function DashboardPage() {
                 to={drill('Net balance', { scope: 'balance' }, 'net')}
               />
             </div>
+
+            {/* Daily burn — only over a single month, where "the 3rd" means one day. */}
+            {period.month !== null && (dashboard?.dailySpending.length ?? 0) > 0 && (
+              <Section title={`🔥 Daily spending — ${label}`}>
+                {dashboardLoading ? (
+                  <Spinner />
+                ) : (
+                  <DailySpendChart
+                    daily={dashboard!.dailySpending}
+                    daysInMonth={dashboard!.daysInMonth}
+                    elapsedDays={dashboard!.elapsedDays}
+                    onSelectDay={(day) =>
+                      navigate(drill(`${label} — day ${day}`, { direction: 'expense', day }, 'outflow'))
+                    }
+                  />
+                )}
+              </Section>
+            )}
 
             {/* Monthly flow */}
             <Section

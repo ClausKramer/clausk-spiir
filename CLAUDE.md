@@ -237,3 +237,22 @@ adjusting filters doesn't fill the back button.
 ```bash
 node --experimental-strip-types scripts/verify-url-state.mjs
 ```
+
+### Charts
+
+Colours live only in `frontend/src/lib/chartColors.ts` — never inline hexes in a component.
+Colour means direction or kind, never rank: a bar's colour follows the thing it represents, so
+re-sorting or filtering never repaints it. Validation is per *co-occurring set* (the marks a
+reader can compare in one chart), not over the union of every colour in the app:
+
+```bash
+node scripts/validate_palette.js "<hex,…>" --mode dark --surface "#1a1f2e" --pairs all
+```
+
+Horizontal bars go through `components/BarRow.tsx`, whose one job is that **length is the
+value**. It has no minimum-width floor — when a bar is too short to hold its label, the label
+moves outside it. Never reintroduce a percentage floor: an 8% floor drew a 0.5% bar 17x too long.
+
+```bash
+node scripts/verify-bar-scales.mjs --year <year>   # needs the API running locally
+```

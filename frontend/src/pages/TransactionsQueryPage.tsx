@@ -6,9 +6,8 @@ import { CategoryPicker } from '../components/CategoryPicker'
 import { TagEditor } from '../components/TagEditor'
 import { MONTH_NAMES, periodLabel, readPeriod, currentMonth } from '../lib/period'
 import { dashboardLink, type Measure } from '../lib/drill'
+import { INCOME as POSITIVE, EXPENSE as NEGATIVE } from '../lib/chartColors'
 
-const POSITIVE = '#059669'
-const NEGATIVE = '#dc2626'
 
 const kr = (n: number) =>
   n.toLocaleString('da-DK', { style: 'currency', currency: 'DKK', maximumFractionDigits: 0 })

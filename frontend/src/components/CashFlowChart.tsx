@@ -1,17 +1,9 @@
 import { useState } from 'react'
 import type { MonthlyFlow } from '../api/transactions'
-
-const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-
-// Validated with the dataviz palette checker against this chart's dark surface (#1a1f2e):
-// all of lightness band, chroma floor, CVD separation, normal-vision floor and contrast pass
-// under all-pairs. Green/red keeps the finance convention used elsewhere in the app; the darker
-// steps are what lift green↔red to a passing ΔE 8.6 under deuteranopia, and blue for the net
-// line clears both by a wide margin. Don't lighten these without re-running the checker.
-const INCOME = '#059669'
-const EXPENSE = '#dc2626'
-const NET = '#2563eb'
-const SURFACE = '#1a1f2e'
+// This chart's three series are the FLOW set in lib/chartColors — validated together under
+// all-pairs against this surface. See that file before changing any of them.
+import { INCOME, EXPENSE, NET, SURFACE } from '../lib/chartColors'
+import { MONTH_NAMES } from '../lib/period'
 
 const W = 760
 const H = 280

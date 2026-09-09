@@ -18,21 +18,18 @@ import { CashFlowChart } from '../components/CashFlowChart'
 import { PeriodNavigator } from '../components/PeriodNavigator'
 import { periodLabel, MONTH_NAMES, readPeriod, writePeriod, currentMonth } from '../lib/period'
 import { drillTo, type Measure } from '../lib/drill'
-
-const CATEGORY_COLORS = [
-  '#ef4444', '#f97316', '#eab308', '#3b82f6', '#6366f1',
-  '#8b5cf6', '#06b6d4', '#ec4899', '#22c55e', '#64748b',
-]
+import { BarRow } from '../components/BarRow'
+import { EXPENSE, TAG, KIND_FIXED, KIND_VARIABLE, KIND_SAVINGS, KIND_DEBT, KIND_NONE } from '../lib/chartColors'
 
 // Validated as a categorical set against the #111620 panel surface (lightness band, chroma,
 // CVD separation, normal-vision floor, contrast). Uncategorized is deliberately outside the
 // set — it's absence of data, not a fifth kind, so it stays neutral gray.
 const KIND_SLOTS = [
-  { key: 'fixed', label: 'Fixed', color: '#4f46e5', hint: 'Committed costs — rent, insurance, subscriptions' },
-  { key: 'variable', label: 'Variable', color: '#ea580c', hint: 'Discretionary spending you can flex month to month' },
-  { key: 'savings', label: 'Savings', color: '#0d9488', hint: 'Money moved into savings and investments' },
-  { key: 'debt', label: 'Debt', color: '#e11d48', hint: 'Loan and credit repayments' },
-  { key: 'uncategorized', label: 'Unfiled', color: '#475569', hint: 'Spending not filed under any category yet' },
+  { key: 'fixed', label: 'Fixed', color: KIND_FIXED, hint: 'Committed costs — rent, insurance, subscriptions' },
+  { key: 'variable', label: 'Variable', color: KIND_VARIABLE, hint: 'Discretionary spending you can flex month to month' },
+  { key: 'savings', label: 'Savings', color: KIND_SAVINGS, hint: 'Money moved into savings and investments' },
+  { key: 'debt', label: 'Debt', color: KIND_DEBT, hint: 'Loan and credit repayments' },
+  { key: 'uncategorized', label: 'Unfiled', color: KIND_NONE, hint: 'Spending not filed under any category yet' },
 ] as const
 
 const dkk = (n: number) =>
@@ -114,7 +111,6 @@ export function DashboardPage() {
 
   const categoryRows = dashboard?.categoryBreakdown.filter((r) => r.total > 0) ?? []
   const maxCategory = categoryRows.length > 0 ? Math.max(...categoryRows.map((r) => r.total)) : 1
-  const categoryColorByKey = new Map(categoryRows.map((r, i) => [r.categoryId ?? 'none', CATEGORY_COLORS[i % CATEGORY_COLORS.length]]))
 
   // Zero-value kinds are dropped rather than drawn as slivers — a 0% segment is a rendering
   // artefact, and the legend would claim a category that isn't there.
@@ -436,37 +432,30 @@ export function DashboardPage() {
                       {categoryRows.slice(0, 9).map((row) => {
                         const amount = showAverage ? row.total / monthDivisor : row.total
                         return (
-                          <Link
+                          <BarRow
                             key={row.categoryId ?? 'none'}
+                            labelWidth="w-36"
+                            label={
+                              <>
+                                {row.categoryEmoji && <span className="mr-1">{row.categoryEmoji}</span>}
+                                {row.categoryName ?? 'Uncategorized'}
+                              </>
+                            }
+                            // Scaled against the largest bar, so switching between total and
+                            // per-month rescales every bar by the same divisor and the shape
+                            // of the chart is unchanged.
+                            fraction={row.total / maxCategory}
+                            amount={dkk(amount)}
+                            color={EXPENSE}
+                            meta="›"
+                            metaWidth="w-4"
                             to={
                               row.categoryId
                                 ? `/spending/${row.categoryId}?${categoryLinkParams}`
                                 : drill('Uncategorized spending', { uncategorized: true, direction: 'expense' }, 'outflow')
                             }
-                            className="flex w-full items-center gap-2.5 rounded text-left hover:bg-white/[0.03] focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
                             title={`Open the ${row.categoryName ?? 'uncategorized'} breakdown`}
-                          >
-                            <div className="w-36 shrink-0 truncate text-right text-xs text-slate-400">
-                              {row.categoryEmoji && <span className="mr-1">{row.categoryEmoji}</span>}
-                              {row.categoryName ?? 'Uncategorized'}
-                            </div>
-                            {/* Bars are scaled against the largest bar, so switching unit rescales
-                                every bar by the same divisor and the shape is unchanged. */}
-                            <div className="h-[22px] flex-1 overflow-hidden rounded bg-[#1e2535]">
-                              <div
-                                className="flex h-full items-center rounded px-2.5 transition-all duration-500"
-                                style={{
-                                  width: `${Math.max((row.total / maxCategory) * 100, 8)}%`,
-                                  background: categoryColorByKey.get(row.categoryId ?? 'none'),
-                                }}
-                              >
-                                <span className="whitespace-nowrap text-[0.7rem] font-semibold text-white/90">
-                                  {dkk(amount)}
-                                </span>
-                              </div>
-                            </div>
-                            <span className="shrink-0 pr-1 text-slate-600">›</span>
-                          </Link>
+                          />
                         )
                       })}
                     </div>
@@ -573,29 +562,18 @@ export function DashboardPage() {
                 ) : (
                   <div className="space-y-2">
                     {tagRows.slice(0, 9).map((tag) => (
-                      <Link
+                      <BarRow
                         key={tag.tagId}
+                        labelWidth="w-28"
+                        label={tag.name}
+                        fraction={tag.total / maxTag}
+                        amount={dkk(tag.total)}
+                        color={TAG}
+                        meta={`${tag.count}×`}
+                        metaWidth="w-10"
                         to={drill(tag.name, { tagId: tag.tagId, direction: 'expense' }, 'outflow')}
-                        className="-mx-1 flex items-center gap-2.5 rounded px-1 hover:bg-white/[0.04]"
                         title={`Show the transactions tagged ${tag.name}`}
-                      >
-                        <div className="w-28 shrink-0 truncate text-right text-xs text-slate-400">
-                          {tag.name}
-                        </div>
-                        <div className="h-[22px] flex-1 overflow-hidden rounded bg-[#1e2535]">
-                          <div
-                            className="flex h-full items-center rounded bg-[#7c3aed] px-2.5"
-                            style={{ width: `${Math.max((tag.total / maxTag) * 100, 8)}%` }}
-                          >
-                            <span className="whitespace-nowrap text-[0.7rem] font-semibold text-white/90">
-                              {dkk(tag.total)}
-                            </span>
-                          </div>
-                        </div>
-                        <span className="w-10 shrink-0 text-right text-[0.7rem] tabular-nums text-slate-600">
-                          {tag.count}×
-                        </span>
-                      </Link>
+                      />
                     ))}
                   </div>
                 )}

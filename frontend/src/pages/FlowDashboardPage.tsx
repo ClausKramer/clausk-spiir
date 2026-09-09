@@ -6,12 +6,8 @@ import { CategoryPicker } from '../components/CategoryPicker'
 import { TagEditor } from '../components/TagEditor'
 import { MONTH_NAMES, periodLabel, readPeriod, currentMonth } from '../lib/period'
 import { drillTo, dashboardLink } from '../lib/drill'
-
-// Same steps the cash flow chart uses, and validated with it against this surface. Income and
-// expenses never appear together on this page — it is one direction at a time — so the accent
-// carries which side you're looking at without any risk of the pair being compared.
-const INCOME = '#059669'
-const EXPENSE = '#dc2626'
+import { BarRow } from '../components/BarRow'
+import { INCOME, EXPENSE } from '../lib/chartColors'
 
 const kr = (n: number) =>
   n.toLocaleString('da-DK', { style: 'currency', currency: 'DKK', maximumFractionDigits: 0 })
@@ -138,73 +134,46 @@ export function FlowDashboardPage() {
 
             <Panel title={`🗂️ By category`}>
               <div className="space-y-1.5">
-                {data.byCategory.map((c) => {
-                  const row = (
-                    <>
-                      <div className="w-40 shrink-0 truncate text-right text-xs text-slate-400">
+                {data.byCategory.map((c) => (
+                  <BarRow
+                    key={c.categoryId ?? 'none'}
+                    label={
+                      <>
                         {c.emoji && <span className="mr-1">{c.emoji}</span>}
                         {c.name ?? 'Uncategorized'}
-                      </div>
-                      <div className="h-[22px] flex-1 overflow-hidden rounded bg-[#1e2535]">
-                        <div
-                          className="flex h-full items-center rounded px-2.5"
-                          style={{ width: `${Math.max((c.total / maxCategory) * 100, 10)}%`, background: accent }}
-                        >
-                          <span className="whitespace-nowrap text-[0.7rem] font-semibold text-white/90">
-                            {kr(c.total)}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="w-12 shrink-0 text-right text-[0.7rem] tabular-nums text-slate-500">
-                        {c.count}×
-                      </div>
-                    </>
-                  )
-                  // Uncategorized has no page to open — there's no category behind it.
-                  return c.categoryId ? (
-                    <Link
-                      key={c.categoryId}
-                      to={`/spending/${c.categoryId}?${search.toString()}`}
-                      className="flex items-center gap-2.5 rounded hover:bg-white/[0.03]"
-                      title={`Open the ${c.name} breakdown`}
-                    >
-                      {row}
-                    </Link>
-                  ) : (
-                    <div key="none" className="flex items-center gap-2.5">
-                      {row}
-                    </div>
-                  )
-                })}
+                      </>
+                    }
+                    fraction={c.total / maxCategory}
+                    amount={kr(c.total)}
+                    color={accent}
+                    meta={`${c.count}×`}
+                    metaWidth="w-12"
+                    // Uncategorized has no category page to open — there is no category behind
+                    // it — so it links to the filtered rows instead of nowhere.
+                    to={
+                      c.categoryId
+                        ? `/spending/${c.categoryId}?${search.toString()}`
+                        : drill('Uncategorized', { uncategorized: true })
+                    }
+                    title={c.categoryId ? `Open the ${c.name} breakdown` : 'Show the unfiled transactions'}
+                  />
+                ))}
               </div>
             </Panel>
 
             <Panel title={isIncome ? '💼 Where it comes from' : '🏬 Where it goes'}>
               <div className="space-y-1.5">
-                {data.bySource.slice(0, 12).map((s) => (
-                  <Link
-                    key={s.merchant}
-                    to={drill(s.merchant, { merchant: s.merchant })}
-                    className="-mx-1 flex items-center gap-2.5 rounded px-1 hover:bg-white/[0.03]"
-                    title={`Show the ${s.merchant} transactions`}
-                  >
-                    <div className="w-40 shrink-0 truncate text-right text-xs text-slate-400">
-                      {s.merchant}
-                    </div>
-                    <div className="h-[22px] flex-1 overflow-hidden rounded bg-[#1e2535]">
-                      <div
-                        className="flex h-full items-center rounded px-2.5"
-                        style={{ width: `${Math.max((s.total / maxSource) * 100, 10)}%`, background: accent }}
-                      >
-                        <span className="whitespace-nowrap text-[0.7rem] font-semibold text-white/90">
-                          {kr(s.total)}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="w-24 shrink-0 text-right text-[0.7rem] tabular-nums text-slate-500">
-                      {s.count}× · {kr(s.average)}
-                    </div>
-                  </Link>
+                {data.bySource.slice(0, 12).map((src) => (
+                  <BarRow
+                    key={src.merchant}
+                    label={src.merchant}
+                    fraction={src.total / maxSource}
+                    amount={kr(src.total)}
+                    color={accent}
+                    meta={`${src.count}× · ${kr(src.average)}`}
+                    to={drill(src.merchant, { merchant: src.merchant })}
+                    title={`Show the ${src.merchant} transactions`}
+                  />
                 ))}
                 {data.bySource.length > 12 && (
                   <p className="pt-1 text-center text-xs text-slate-600">

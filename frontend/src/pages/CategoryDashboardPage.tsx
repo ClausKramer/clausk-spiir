@@ -7,14 +7,8 @@ import { CategoryPicker } from '../components/CategoryPicker'
 import { TagEditor } from '../components/TagEditor'
 import { readPeriod, currentMonth, periodLabel, MONTH_NAMES } from '../lib/period'
 import { drillTo, dashboardLink } from '../lib/drill'
-
-// Single series, so no legend and no categorical palette — the bars encode magnitude by length,
-// and one hue carries it. This is the same expense red used across the app, at the darker step
-// validated for this dark surface.
-const SPEND = '#dc2626'
-// Refunds run the other way, so they get the income green rather than a lighter red — the
-// direction is the point, and a shade of the same hue would read as "less spending", not "money back".
-const REFUND = '#059669'
+import { BarRow } from '../components/BarRow'
+import { EXPENSE, INCOME, NEUTRAL, SURFACE, forAmount } from '../lib/chartColors'
 
 const kr = (n: number) =>
   n.toLocaleString('da-DK', { style: 'currency', currency: 'DKK', maximumFractionDigits: 0 })
@@ -125,17 +119,17 @@ export function CategoryDashboardPage() {
                 <div className="flex h-6 overflow-hidden rounded">
                   {recurringShare > 0 && (
                     <div
-                      className="flex items-center justify-center bg-[#dc2626] text-[0.65rem] font-semibold text-white/90"
-                      style={{ width: `${recurringShare * 100}%` }}
+                      className="flex items-center justify-center text-[0.65rem] font-semibold text-white/95"
+                      style={{ width: `${recurringShare * 100}%`, background: EXPENSE }}
                     >
                       {recurringShare > 0.12 && `${Math.round(recurringShare * 100)}%`}
                     </div>
                   )}
-                  {recurringShare > 0 && recurringShare < 1 && <div className="w-0.5 shrink-0 bg-[#1a1f2e]" />}
+                  {recurringShare > 0 && recurringShare < 1 && <div className="w-0.5 shrink-0" style={{ background: SURFACE }} />}
                   {recurringShare < 1 && (
                     <div
-                      className="flex items-center justify-center bg-[#7c2d12] text-[0.65rem] font-semibold text-white/90"
-                      style={{ width: `${(1 - recurringShare) * 100}%` }}
+                      className="flex items-center justify-center text-[0.65rem] font-semibold text-white/95"
+                      style={{ width: `${(1 - recurringShare) * 100}%`, background: NEUTRAL }}
                     >
                       {1 - recurringShare > 0.12 && `${Math.round((1 - recurringShare) * 100)}%`}
                     </div>
@@ -143,11 +137,11 @@ export function CategoryDashboardPage() {
                 </div>
                 <div className="mt-2 flex flex-wrap justify-center gap-4 text-xs text-slate-400">
                   <span className="flex items-center gap-1.5">
-                    <span className="h-2.5 w-2.5 rounded-sm bg-[#dc2626]" />
+                    <span className="h-2.5 w-2.5 rounded-sm" style={{ background: EXPENSE }} />
                     Recurring {kr(data.stats.recurringTotal)}
                   </span>
                   <span className="flex items-center gap-1.5">
-                    <span className="h-2.5 w-2.5 rounded-sm bg-[#7c2d12]" />
+                    <span className="h-2.5 w-2.5 rounded-sm" style={{ background: NEUTRAL }} />
                     One-off {kr(data.total - data.stats.recurringTotal)}
                   </span>
                 </div>
@@ -178,7 +172,7 @@ export function CategoryDashboardPage() {
                         style={{
                           height: `${(Math.abs(m.total) / maxMonth) * 100}%`,
                           minHeight: m.total !== 0 ? 2 : 0,
-                          background: m.total < 0 ? REFUND : SPEND,
+                          background: m.total < 0 ? INCOME : EXPENSE,
                         }}
                       />
                     </div>
@@ -200,40 +194,25 @@ export function CategoryDashboardPage() {
               <Panel title="🗂️ Broken down">
                 <div className="space-y-1.5">
                   {data.childBreakdown.map((child) => (
-                    <Link
+                    <BarRow
                       key={child.categoryId ?? 'self'}
-                      to={
-                        child.categoryId
-                          ? `/spending/${child.categoryId}?${search.toString()}`
-                          : '#'
+                      label={
+                        <>
+                          {child.emoji && <span className="mr-1">{child.emoji}</span>}
+                          {child.name}
+                        </>
                       }
-                      onClick={(e) => !child.categoryId && e.preventDefault()}
-                      className={`flex items-center gap-2.5 rounded ${
-                        child.categoryId ? 'hover:bg-white/[0.03]' : 'cursor-default'
-                      }`}
+                      // Magnitude, not value: a leaf that nets negative (refunds outweighing
+                      // charges) still needs a bar proportional to how much moved, drawn in
+                      // the refund colour.
+                      fraction={Math.abs(child.total) / maxChild}
+                      amount={kr(child.total)}
+                      color={forAmount(child.total)}
+                      meta={`${child.count}×`}
+                      metaWidth="w-16"
+                      to={child.categoryId ? `/spending/${child.categoryId}?${search.toString()}` : undefined}
                       title={child.categoryId ? `Open the ${child.name} breakdown` : 'Filed on the group itself'}
-                    >
-                      <div className="w-40 shrink-0 truncate text-right text-xs text-slate-400">
-                        {child.emoji && <span className="mr-1">{child.emoji}</span>}
-                        {child.name}
-                      </div>
-                      <div className="h-[22px] flex-1 overflow-hidden rounded bg-[#1e2535]">
-                        <div
-                          className="flex h-full items-center rounded px-2.5"
-                          style={{
-                            width: `${Math.max((Math.abs(child.total) / maxChild) * 100, 10)}%`,
-                            background: child.total < 0 ? REFUND : SPEND,
-                          }}
-                        >
-                          <span className="whitespace-nowrap text-[0.7rem] font-semibold text-white/90">
-                            {kr(child.total)}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="w-16 shrink-0 text-right text-[0.7rem] tabular-nums text-slate-500">
-                        {child.count}×
-                      </div>
-                    </Link>
+                    />
                   ))}
                 </div>
               </Panel>
@@ -242,34 +221,31 @@ export function CategoryDashboardPage() {
             <Panel title="🏬 Where it goes">
               <div className="space-y-1.5">
                 {data.merchants.slice(0, 12).map((m) => (
-                  <Link
+                  <BarRow
                     key={m.merchant}
+                    label={
+                      <>
+                        {m.merchant}
+                        {m.isRecurring && (
+                          <span className="ml-1 text-[0.6rem] text-amber-500" title="Appears in most months of this period">🔁</span>
+                        )}
+                      </>
+                    }
+                    fraction={Math.abs(m.total) / maxMerchant}
+                    amount={kr(m.total)}
+                    color={forAmount(m.total)}
+                    meta={
+                      <>
+                        {m.count}× · {kr(m.average)}
+                        {m.refundTotal > 0 && (
+                          <span className="ml-1 text-emerald-500" title={`${kr(m.refundTotal)} refunded`}>↩</span>
+                        )}
+                      </>
+                    }
+                    metaWidth="w-28"
                     to={drill(m.merchant, { merchant: m.merchant, categoryId: categoryId ?? undefined, uncategorized: categoryId === null })}
-                    className="-mx-1 flex items-center gap-2.5 rounded px-1 hover:bg-white/[0.03]"
                     title={`Show the ${m.merchant} transactions in this category`}
-                  >
-                    <div className="w-40 shrink-0 truncate text-right text-xs text-slate-400">
-                      {m.merchant}
-                      {m.isRecurring && <span className="ml-1 text-[0.6rem] text-amber-500" title="Appears in most months of this period">🔁</span>}
-                    </div>
-                    <div className="h-[22px] flex-1 overflow-hidden rounded bg-[#1e2535]">
-                      <div
-                        className="flex h-full items-center rounded px-2.5"
-                        style={{
-                          width: `${Math.max((Math.abs(m.total) / maxMerchant) * 100, 10)}%`,
-                          background: m.total < 0 ? REFUND : SPEND,
-                        }}
-                      >
-                        <span className="whitespace-nowrap text-[0.7rem] font-semibold text-white/90">{kr(m.total)}</span>
-                      </div>
-                    </div>
-                    <div className="w-28 shrink-0 text-right text-[0.7rem] tabular-nums text-slate-500">
-                      {m.count}× · {kr(m.average)}
-                      {m.refundTotal > 0 && (
-                        <span className="ml-1 text-emerald-500" title={`${kr(m.refundTotal)} refunded`}>↩</span>
-                      )}
-                    </div>
-                  </Link>
+                  />
                 ))}
                 {data.merchants.length > 12 && (
                   <p className="pt-1 text-center text-xs text-slate-600">…and {data.merchants.length - 12} more</p>

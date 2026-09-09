@@ -4,8 +4,8 @@ import { getFlowBreakdown, type FlowDirection, type Period, type TransactionQuer
 import { getBankAccounts } from '../api/accounts'
 import { CategoryPicker } from '../components/CategoryPicker'
 import { TagEditor } from '../components/TagEditor'
-import { MONTH_NAMES, periodLabel } from '../lib/period'
-import { drillTo } from '../lib/drill'
+import { MONTH_NAMES, periodLabel, readPeriod, currentMonth } from '../lib/period'
+import { drillTo, dashboardLink } from '../lib/drill'
 
 // Same steps the cash flow chart uses, and validated with it against this surface. Income and
 // expenses never appear together on this page — it is one direction at a time — so the accent
@@ -25,10 +25,7 @@ export function FlowDashboardPage() {
   const accent = isIncome ? INCOME : EXPENSE
 
   const accountIds = search.getAll('accountIds')
-  const period: Period = {
-    year: Number(search.get('year')) || new Date().getFullYear(),
-    month: search.get('month') ? Number(search.get('month')) : null,
-  }
+  const period: Period = readPeriod(search) ?? currentMonth()
   const label = periodLabel(period)
 
   const { data: accounts = [] } = useQuery({ queryKey: ['accounts'], queryFn: getBankAccounts })
@@ -60,7 +57,7 @@ export function FlowDashboardPage() {
       <div className="mx-auto max-w-5xl">
         <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <Link to="/dashboard" className="text-xs text-slate-500 hover:text-slate-300">
+            <Link to={dashboardLink(accountIds, period)} className="text-xs text-slate-500 hover:text-slate-300">
               ← Dashboard
             </Link>
             <h1 className="mt-1 flex items-center gap-2 text-xl font-bold text-slate-50">

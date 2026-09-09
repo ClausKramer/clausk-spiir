@@ -4,8 +4,8 @@ import { runTransactionQuery, type Period, type TransactionQuery } from '../api/
 import { getBankAccounts } from '../api/accounts'
 import { CategoryPicker } from '../components/CategoryPicker'
 import { TagEditor } from '../components/TagEditor'
-import { MONTH_NAMES, periodLabel } from '../lib/period'
-import type { Measure } from '../lib/drill'
+import { MONTH_NAMES, periodLabel, readPeriod, currentMonth } from '../lib/period'
+import { dashboardLink, type Measure } from '../lib/drill'
 
 const POSITIVE = '#059669'
 const NEGATIVE = '#dc2626'
@@ -22,10 +22,7 @@ export function TransactionsQueryPage() {
   const label = search.get('label') ?? 'Transactions'
   const measure = (search.get('measure') as Measure | null) ?? 'net'
   const accountIds = search.getAll('accountIds')
-  const period: Period = {
-    year: Number(search.get('year')) || new Date().getFullYear(),
-    month: search.get('month') ? Number(search.get('month')) : null,
-  }
+  const period: Period = readPeriod(search) ?? currentMonth()
 
   const query: TransactionQuery = {
     scope: (search.get('scope') as TransactionQuery['scope']) ?? 'settled',
@@ -65,7 +62,7 @@ export function TransactionsQueryPage() {
       <div className="mx-auto max-w-5xl">
         <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
           <div>
-            <Link to="/dashboard" className="text-xs text-slate-500 hover:text-slate-300">
+            <Link to={dashboardLink(accountIds, period)} className="text-xs text-slate-500 hover:text-slate-300">
               ← Dashboard
             </Link>
             <h1 className="mt-1 text-xl font-bold text-slate-50">{label}</h1>

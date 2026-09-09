@@ -216,3 +216,24 @@ node scripts/verify-drilldowns.mjs --year <year>   # needs the API running local
 
 It asserts every dashboard figure equals the total of its own drill-down, and fails the process
 on any mismatch. Add a check there for any new calculated value.
+
+### URL state
+
+Every filter and view choice lives in the query string — there is no filter state in `useState`.
+Pages are bookmarkable and shareable, and returning from a drill-down lands on the view you left.
+The shared period convention (`frontend/src/lib/period.ts`) is:
+
+```
+(no year)            page applies its own default (dashboard: this month; account list: all history)
+?year=2026           the whole of 2026
+?year=2026&month=3   March 2026
+```
+
+`year` alone therefore means "all year" explicitly, which is what lets an absent year mean
+"unspecified" without colliding with it. Account filters ride as repeated `accountIds`, with
+`accounts=none` for a deliberately empty selection. Filter writes use `replace: true` so
+adjusting filters doesn't fill the back button.
+
+```bash
+node --experimental-strip-types scripts/verify-url-state.mjs
+```

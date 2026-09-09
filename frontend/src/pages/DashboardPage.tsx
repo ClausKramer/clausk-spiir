@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useMe, useLogout } from '../hooks/useAuth'
 import {
   getTransactions,
@@ -16,7 +16,7 @@ import { CategoryPicker } from '../components/CategoryPicker'
 import { TagEditor } from '../components/TagEditor'
 import { CashFlowChart } from '../components/CashFlowChart'
 import { PeriodNavigator } from '../components/PeriodNavigator'
-import { periodLabel, MONTH_NAMES } from '../lib/period'
+import { periodLabel, MONTH_NAMES, readPeriod, writePeriod, currentMonth } from '../lib/period'
 import { drillTo, type Measure } from '../lib/drill'
 
 const CATEGORY_COLORS = [
@@ -47,26 +47,51 @@ export function DashboardPage() {
   const { data: accounts = [] } = useQuery({ queryKey: ['accounts'], queryFn: getBankAccounts })
 
 
+  // Every filter and view choice on this page lives in the URL, so the view can be bookmarked,
+  // shared, and survives a reload — and so that coming back from a drill-down lands on the same
+  // dashboard you left. Written with replace so filter fiddling doesn't fill up the back button.
+  const [search, setSearch] = useSearchParams()
+  const update = (mutate: (p: URLSearchParams) => void) => {
+    const next = new URLSearchParams(search)
+    mutate(next)
+    setSearch(next, { replace: true })
+  }
+
   // null = every account included. Once the user toggles one off, we track an explicit set.
-  const [selectedIds, setSelectedIds] = useState<string[] | null>(null)
+  // In the URL: no marker means all, `accounts=none` means an empty selection (which is a real
+  // state the user can reach and would be baffling to silently reset), otherwise the ids.
+  const selectedIds: string[] | null =
+    search.get('accounts') === 'none' ? [] : search.getAll('accountIds').length > 0 ? search.getAll('accountIds') : null
+
   const effectiveSelected = selectedIds ?? accounts.map((a) => a.id)
   const noneSelected = accounts.length > 0 && effectiveSelected.length === 0
   const allSelected = selectedIds === null
   // Send [] (no filter) when every account is included — cheaper query, same result.
   const accountIdsParam = allSelected || effectiveSelected.length === accounts.length ? [] : effectiveSelected
 
-  function toggleAccount(id: string) {
-    setSelectedIds((prev) => {
-      // Coming from "All" (prev === null), a click means "show me just this one", not "remove
-      // this one from everything" — so the starting set is empty, not every account. From any
-      // explicit selection onward, clicks toggle normally within that set.
-      const current = prev ?? []
-      return current.includes(id) ? current.filter((x) => x !== id) : [...current, id]
+  function setSelectedIds(next: string[] | null) {
+    update((p) => {
+      p.delete('accountIds')
+      p.delete('accounts')
+      if (next === null) return
+      if (next.length === 0) p.set('accounts', 'none')
+      else next.forEach((id) => p.append('accountIds', id))
     })
   }
 
-  // Defaults to the whole current year, per the picker's own defaults.
-  const [period, setPeriod] = useState<Period>({ year: new Date().getFullYear(), month: null })
+  function toggleAccount(id: string) {
+    // Coming from "All" (selectedIds === null), a click means "show me just this one", not
+    // "remove this one from everything" — so the starting set is empty, not every account. From
+    // any explicit selection onward, clicks toggle normally within that set.
+    const current = selectedIds ?? []
+    setSelectedIds(current.includes(id) ? current.filter((x) => x !== id) : [...current, id])
+  }
+
+  // Opens on the current month: the dashboard's job on arrival is "how is this month going",
+  // and a whole year of history is a question you go looking for rather than land on. An
+  // explicit ?year= in the URL always wins, so a bookmarked or shared view keeps its period.
+  const period: Period = readPeriod(search) ?? currentMonth()
+  const setPeriod = (next: Period) => update((p) => writePeriod(p, next))
 
   const { data: dashboard, isLoading: dashboardLoading } = useQuery({
     queryKey: ['dashboard', accountIdsParam, period],
@@ -105,11 +130,15 @@ export function DashboardPage() {
 
   // Chart by default for the shape of the year; the cards view doubles as this chart's table
   // view, so every plotted value stays readable as text.
-  const [flowView, setFlowView] = useState<'chart' | 'cards'>('chart')
+  const flowView: 'chart' | 'cards' = search.get('flow') === 'cards' ? 'cards' : 'chart'
+  const setFlowView = (v: 'chart' | 'cards') =>
+    update((p) => (v === 'chart' ? p.delete('flow') : p.set('flow', v)))
 
   // Average by default: "we spend 4.200 kr/month on groceries" is the figure a budget is set
   // against, and it's comparable between a part-year and a full one — a total isn't.
-  const [categoryAmounts, setCategoryAmounts] = useState<'average' | 'total'>('average')
+  const categoryAmounts: 'average' | 'total' = search.get('amounts') === 'total' ? 'total' : 'average'
+  const setCategoryAmounts = (v: 'average' | 'total') =>
+    update((p) => (v === 'average' ? p.delete('amounts') : p.set('amounts', v)))
   // Months that actually saw spending, never zero. Over a single selected month this is 1, so
   // average and total coincide and the toggle is hidden.
   const monthDivisor = Math.max(1, dashboard?.monthsWithData ?? 1)

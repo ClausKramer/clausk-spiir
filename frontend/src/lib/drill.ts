@@ -1,4 +1,16 @@
 import type { Period, TransactionQuery } from '../api/transactions'
+import { writePeriod } from './period'
+
+// The way back to the dashboard from any detail page, carrying the period and account filter
+// the reader was looking at. Returning to a bare /dashboard would silently reset both and land
+// them on a different view than the one they drilled out of.
+export function dashboardLink(accountIds: string[], period: Period | null): string {
+  const p = new URLSearchParams()
+  writePeriod(p, period)
+  accountIds.forEach((id) => p.append('accountIds', id))
+  const qs = p.toString()
+  return qs ? `/dashboard?${qs}` : '/dashboard'
+}
 
 // Builds the URL behind a calculated figure. Every clickable number on every page goes through
 // here, so the link and the aggregation can't drift apart in wording or in which filters travel.

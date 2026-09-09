@@ -5,9 +5,8 @@ import { getBankAccounts } from '../api/accounts'
 import { getCategories } from '../api/categories'
 import { CategoryPicker } from '../components/CategoryPicker'
 import { TagEditor } from '../components/TagEditor'
-import { drillTo } from '../lib/drill'
-
-const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+import { readPeriod, currentMonth, periodLabel, MONTH_NAMES } from '../lib/period'
+import { drillTo, dashboardLink } from '../lib/drill'
 
 // Single series, so no legend and no categorical palette — the bars encode magnitude by length,
 // and one hue carries it. This is the same expense red used across the app, at the darker step
@@ -30,11 +29,8 @@ export function CategoryDashboardPage() {
 
   const categoryId = routeId === UNCATEGORIZED ? null : (routeId ?? null)
   const accountIds = search.getAll('accountIds')
-  const period: Period = {
-    year: Number(search.get('year')) || new Date().getFullYear(),
-    month: search.get('month') ? Number(search.get('month')) : null,
-  }
-  const periodLabel = period.month === null ? String(period.year) : `${MONTH_NAMES[period.month - 1]} ${period.year}`
+  const period: Period = readPeriod(search) ?? currentMonth()
+  const label = periodLabel(period)
 
   const { data: accounts = [] } = useQuery({ queryKey: ['accounts'], queryFn: getBankAccounts })
   const { data: categories = [] } = useQuery({ queryKey: ['categories'], queryFn: getCategories })
@@ -49,7 +45,7 @@ export function CategoryDashboardPage() {
   const title = categoryId === null ? '— Uncategorized' : `${category?.emoji ?? ''} ${category?.name ?? 'Category'}`.trim()
 
   // Preserve the dashboard's filters when going back, so the user returns to the view they left.
-  const backTo = `/dashboard`
+  const backTo = dashboardLink(accountIds, period)
 
   // Every figure on this page opens the rows behind it, always narrowed to this category (or to
   // uncategorized) so a merchant or tag total means "within this category", matching the number
@@ -75,7 +71,7 @@ export function CategoryDashboardPage() {
             <Link to={backTo} className="text-xs text-slate-500 hover:text-slate-300">← Dashboard</Link>
             <h1 className="mt-1 text-xl font-bold text-slate-50">{title}</h1>
             <p className="mt-0.5 text-xs text-slate-500">
-              {periodLabel}
+              {label}
               {accountIds.length > 0 && <> &nbsp;·&nbsp; {accountIds.length} of {accounts.length} accounts</>}
             </p>
           </div>
@@ -100,7 +96,7 @@ export function CategoryDashboardPage() {
         ) : !data || data.stats.transactionCount === 0 ? (
           <div className="rounded-xl border border-[#232b3b] bg-[#1a1f2e] py-16 text-center">
             <div className="mb-2 text-3xl">🗂️</div>
-            <p className="text-slate-400">Nothing spent in this category for {periodLabel}.</p>
+            <p className="text-slate-400">Nothing spent in this category for {label}.</p>
           </div>
         ) : (
           <>
@@ -162,7 +158,7 @@ export function CategoryDashboardPage() {
             )}
 
             {data.monthlyTotals.length > 1 && (
-              <Panel title={`📅 Spend per month — ${periodLabel}`}>
+              <Panel title={`📅 Spend per month — ${label}`}>
                 {/* Plot area and labels are separate rows sharing the same flex layout. The plot
                     row carries a definite height so the bars' percentage heights have something
                     to resolve against — nesting them under an items-end container sizes each

@@ -47,6 +47,7 @@ builder.Services.AddScoped<ICurrentUser, CurrentUserService>();
 builder.Services.AddScoped<IPasswordlessAuthenticator, PasswordlessAuthenticator>();
 builder.Services.AddScoped<DefaultDataSeeder>();
 builder.Services.AddScoped<NetWorthRepository>();
+builder.Services.AddScoped<NetWorthSeedImporter>();
 
 // Real email delivery via Resend when configured, falling back to console-only logging (dev, or
 // before Resend:ApiKey is set) — same "not-configured" placeholder convention as the other
@@ -156,6 +157,25 @@ await using (var seedScope = app.Services.CreateAsyncScope())
     catch (Exception ex)
     {
         seedLogger.LogError(ex, "Could not sync default categories at startup.");
+    }
+}
+
+// TEMPORARY: imports a bundled net worth history on first startup, for the one-off migration
+// out of a spreadsheet. Idempotent, and a no-op once the accounts exist. Remove this together
+// with Data/NetWorthSeed.json and NetWorthSeedImporter.cs once the data has landed.
+await using (var importScope = app.Services.CreateAsyncScope())
+{
+    var importLogger = importScope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("NetWorthSeed");
+    try
+    {
+        await importScope.ServiceProvider
+            .GetRequiredService<NetWorthSeedImporter>()
+            .ImportAsync("claus@simplitize.dk");
+    }
+    catch (Exception ex)
+    {
+        // Never fatal: a failed one-off import is worth a log line, not an API that won't boot.
+        importLogger.LogError(ex, "Could not import the bundled net worth history.");
     }
 }
 

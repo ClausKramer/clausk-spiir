@@ -8,6 +8,7 @@ import {
   createNetWorthAccount,
   updateNetWorthAccount,
   deleteNetWorthAccount,
+  importNetWorth,
   KIND_LABELS,
   ASSET_KINDS,
   LIABILITY_KINDS,
@@ -361,6 +362,24 @@ function ManageAccountsDialog({ onClose, onChanged }: { onClose: () => void; onC
     },
   })
 
+  // Bulk import from a file produced by scripts/parse-networth-xlsx.mjs. Kept behind a file
+  // picker rather than parsing a spreadsheet in the browser: the parsing needs checking against
+  // the workbook's own totals, and that check belongs somewhere it can be re-run, not in a
+  // one-shot upload.
+  const { mutate: runImport, isPending: importing } = useMutation({
+    mutationFn: async (file: File) => {
+      const payload = JSON.parse(await file.text())
+      if (!Array.isArray(payload?.accounts) || !Array.isArray(payload?.snapshots))
+        throw new Error('That file does not look like a net worth export.')
+      return importNetWorth(payload)
+    },
+    onSuccess: (result) => {
+      refresh()
+      onChanged(result.message)
+    },
+    onError: (e: Error) => onChanged(e.message ?? 'Import failed.'),
+  })
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
       <div
@@ -476,6 +495,24 @@ function ManageAccountsDialog({ onClose, onChanged }: { onClose: () => void; onC
               Done
             </button>
           </form>
+
+          <label className="mt-3 flex cursor-pointer items-center gap-2 text-xs text-slate-500">
+            <input
+              type="file"
+              accept="application/json,.json"
+              disabled={importing}
+              onChange={(e) => {
+                const file = e.target.files?.[0]
+                if (file) runImport(file)
+                e.target.value = ''
+              }}
+              className="hidden"
+            />
+            <span className="rounded border border-slate-700 px-2.5 py-1 text-slate-400 hover:bg-[#232b3b]">
+              {importing ? 'Importing…' : 'Import history…'}
+            </span>
+            <span>a JSON export of an existing spreadsheet. Safe to run twice.</span>
+          </label>
         </div>
       </div>
     </div>

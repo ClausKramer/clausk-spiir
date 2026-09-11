@@ -139,3 +139,17 @@ export async function getNetWorthDashboard(
   const { data } = await client.get('/networth/dashboard', { params: { scope, year } })
   return data
 }
+
+export interface ImportPayload {
+  accounts: { name: string; kind: NetWorthKind }[]
+  snapshots: { account: string; year: number; month: number; value: number }[]
+}
+
+// Bulk import, matched on account name. Idempotent: accounts already present are reused and
+// snapshots upsert, so running it twice lands the same data rather than doubling it.
+export async function importNetWorth(
+  payload: ImportPayload,
+): Promise<{ createdAccounts: number; written: number; skipped: number; message: string }> {
+  const { data } = await client.post('/networth/import', payload)
+  return data
+}

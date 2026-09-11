@@ -24,6 +24,8 @@ public static class NetWorthEndpoints
         group.MapGet("/entry", GetEntryForm);
         group.MapPost("/entry", SaveEntry);
 
+        group.MapPost("/import", Import);
+
         group.MapGet("/dashboard", GetDashboard);
 
         return app;
@@ -214,10 +216,13 @@ public static class NetWorthEndpoints
                 continue;
             }
 
-            // Stored positive regardless of how it was typed: a mortgage is 1.2m whether the
-            // user entered it as 1200000 or -1200000, and IsLiability decides the direction.
-            await repo.UpsertSnapshotAsync(
-                userId, entry.AccountId, body.Year, body.Month, Math.Abs(entry.Value.Value), entry.Note, ct);
+            // A liability is stored positive however it was typed — a mortgage is 1.2m whether
+            // entered as 1200000 or -1200000, and IsLiability carries the direction. An asset
+            // keeps its sign: a current account that is overdrawn is genuinely negative, and
+            // flipping it would record a debt as money held.
+            var account = accounts[entry.AccountId];
+            var value = account.IsLiability ? Math.Abs(entry.Value.Value) : entry.Value.Value;
+            await repo.UpsertSnapshotAsync(userId, entry.AccountId, body.Year, body.Month, value, entry.Note, ct);
             saved++;
         }
 
@@ -232,6 +237,73 @@ public static class NetWorthEndpoints
                 (var s2, 0) => $"Recorded {s2} value(s) for {body.Year}-{body.Month:00}.",
                 var (s2, c) => $"Recorded {s2} and cleared {c} value(s) for {body.Year}-{body.Month:00}.",
             },
+        });
+    }
+
+    private record ImportRequest(ImportAccount[] Accounts, ImportSnapshot[] Snapshots, bool Replace = false);
+    private record ImportAccount(string Name, string Kind);
+    private record ImportSnapshot(string Account, int Year, int Month, decimal Value);
+
+    // Bulk import, matched on account name. Built for moving years of history out of a
+    // spreadsheet, where the alternative is retyping hundreds of figures by hand.
+    //
+    // Idempotent by construction: accounts are matched by name rather than created blindly, and
+    // snapshots go through the same upsert the monthly form uses, so running it twice lands the
+    // same data rather than doubling it. That matters because a half-finished import is the
+    // likely failure, and the fix has to be "run it again".
+    private static async Task<IResult> Import(
+        ImportRequest body, NetWorthRepository repo, ICurrentUser currentUser, CancellationToken ct = default)
+    {
+        var userId = currentUser.GetRequiredUserId();
+
+        var unknownKinds = body.Accounts.Where(a => !NetWorthKind.IsKnown(a.Kind)).Select(a => a.Kind).Distinct().ToList();
+        if (unknownKinds.Count > 0)
+            return TypedResults.BadRequest(new { error = $"Unknown kind(s): {string.Join(", ", unknownKinds)}" });
+
+        var existing = (await repo.GetAccountsAsync(userId, includeArchived: true, ct))
+            .ToDictionary(a => a.Name, a => a, StringComparer.OrdinalIgnoreCase);
+
+        var createdAccounts = 0;
+        foreach (var incoming in body.Accounts)
+        {
+            var name = incoming.Name.Trim();
+            if (name.Length == 0 || existing.ContainsKey(name)) continue;
+            var account = new NetWorthAccount
+            {
+                Id = Guid.NewGuid(),
+                UserId = userId,
+                Name = name,
+                Kind = incoming.Kind,
+                IsLiability = NetWorthKind.IsLiabilityKind(incoming.Kind),
+                SortOrder = existing.Count + createdAccounts,
+                CreatedAt = DateTime.UtcNow,
+            };
+            await repo.InsertAccountAsync(account, ct);
+            existing[name] = account;
+            createdAccounts++;
+        }
+
+        var written = 0;
+        var skipped = 0;
+        foreach (var snapshot in body.Snapshots)
+        {
+            if (snapshot.Month is < 1 or > 12) { skipped++; continue; }
+            if (!existing.TryGetValue(snapshot.Account.Trim(), out var account)) { skipped++; continue; }
+
+            // Same rule as the monthly form: a liability is magnitude, an asset keeps its sign.
+            var value = account.IsLiability ? Math.Abs(snapshot.Value) : snapshot.Value;
+            await repo.UpsertSnapshotAsync(userId, account.Id, snapshot.Year, snapshot.Month, value, null, ct);
+            written++;
+        }
+
+        return TypedResults.Ok(new
+        {
+            createdAccounts,
+            written,
+            skipped,
+            message = $"Imported {written} value(s) across {body.Accounts.Length} account(s); "
+                      + $"{createdAccounts} newly created"
+                      + (skipped > 0 ? $", {skipped} skipped" : "") + ".",
         });
     }
 

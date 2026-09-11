@@ -54,7 +54,10 @@ public class NetWorthSnapshot
     public Guid NetWorthAccountId { get; set; }
     public int PeriodYear { get; set; }
     public int PeriodMonth { get; set; }
-    /// <summary>Always positive. IsLiability on the account decides which way it pulls.</summary>
+    /// <summary>
+    /// For a liability, the amount owed (positive). For an asset, the balance as it stands —
+    /// negative when the account is overdrawn, which is a real state a current account reaches.
+    /// </summary>
     public decimal Value { get; set; }
     public string? Note { get; set; }
     public DateTime RecordedAt { get; set; }

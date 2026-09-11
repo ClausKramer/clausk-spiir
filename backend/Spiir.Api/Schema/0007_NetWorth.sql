@@ -46,9 +46,10 @@ CREATE TABLE NetWorthSnapshots
     -- storing it as a date invites two entries for the same month that differ only by day.
     PeriodYear         INT              NOT NULL,
     PeriodMonth        INT              NOT NULL,
-    -- Always stored positive, for both assets and liabilities. A mortgage of 1.2m is recorded
-    -- as 1200000, and it is IsLiability that decides which way it pulls — otherwise every
-    -- reader has to remember which sign convention a given row used.
+    -- For a liability, the amount owed, always positive: a mortgage of 1.2m is 1200000, and
+    -- IsLiability is what makes it pull downward.
+    -- For an asset, the balance *signed*, because a current account genuinely swings between
+    -- in credit and overdrawn, and forcing it positive would record an overdraft as money held.
     Value              DECIMAL(18, 2)   NOT NULL,
     Note               NVARCHAR(200)    NULL,
     RecordedAt         DATETIME2        NOT NULL,

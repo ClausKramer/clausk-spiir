@@ -281,17 +281,21 @@ public static class NetWorthEndpoints
             createdAccounts++;
         }
 
-        var written = 0;
         var skipped = 0;
+        var batch = new List<NetWorthRepository.SnapshotValue>(body.Snapshots.Length);
         foreach (var snapshot in body.Snapshots)
         {
             if (snapshot.Month is < 1 or > 12) { skipped++; continue; }
             if (!existing.TryGetValue(snapshot.Account.Trim(), out var account)) { skipped++; continue; }
 
             // Same rule as the monthly form: stored as given, sign and all.
-            await repo.UpsertSnapshotAsync(userId, account.Id, snapshot.Year, snapshot.Month, snapshot.Value, null, ct);
-            written++;
+            batch.Add(new NetWorthRepository.SnapshotValue(account.Id, snapshot.Year, snapshot.Month, snapshot.Value));
         }
+
+        // Written in batches over one connection. An import is thousands of values, and a round
+        // trip each would take long enough against a remote database for the request to be cut
+        // off partway through.
+        var written = await repo.UpsertSnapshotsAsync(userId, batch, ct);
 
         return TypedResults.Ok(new
         {

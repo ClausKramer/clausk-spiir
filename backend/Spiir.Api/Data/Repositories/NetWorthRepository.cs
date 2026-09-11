@@ -116,6 +116,77 @@ public class NetWorthRepository(IDbConnectionFactory connectionFactory)
             new { userId, accountId, year, month, value, note, now = DateTime.UtcNow });
     }
 
+    public record SnapshotValue(Guid AccountId, int Year, int Month, decimal Value);
+
+    /// <summary>
+    /// Records many values at once. The monthly form writes a handful and can afford a round
+    /// trip each; an import writes thousands, and one connection per value turns a few seconds
+    /// into minutes against a remote database — long enough for the request to be cut off with
+    /// the import half-applied.
+    /// </summary>
+    public async Task<int> UpsertSnapshotsAsync(
+        Guid userId, IReadOnlyList<SnapshotValue> values, CancellationToken ct = default)
+    {
+        if (values.Count == 0) return 0;
+
+        using var conn = await connectionFactory.CreateOpenConnectionAsync(ct);
+        var now = DateTime.UtcNow;
+        var written = 0;
+
+        // SQL Server caps a statement at 2100 parameters, and each row costs four, so batches
+        // stay well under that. Update-then-insert rather than MERGE: same two round trips per
+        // batch, without MERGE's edge cases.
+        const int batchSize = 200;
+        for (var offset = 0; offset < values.Count; offset += batchSize)
+        {
+            var batch = values.Skip(offset).Take(batchSize).ToList();
+            var parameters = new DynamicParameters();
+            parameters.Add("userId", userId);
+            parameters.Add("now", now);
+
+            var tuples = new List<string>(batch.Count);
+            for (var i = 0; i < batch.Count; i++)
+            {
+                parameters.Add($"a{i}", batch[i].AccountId);
+                parameters.Add($"y{i}", batch[i].Year);
+                parameters.Add($"m{i}", batch[i].Month);
+                parameters.Add($"v{i}", batch[i].Value);
+                tuples.Add($"(@a{i}, @y{i}, @m{i}, @v{i})");
+            }
+            var source = string.Join(", ", tuples);
+
+            await conn.ExecuteAsync(
+                $"""
+                SET XACT_ABORT ON;
+                BEGIN TRANSACTION;
+
+                WITH incoming (AccountId, Y, M, V) AS (SELECT * FROM (VALUES {source}) x (AccountId, Y, M, V))
+                UPDATE s SET Value = i.V, RecordedAt = @now
+                FROM NetWorthSnapshots s
+                JOIN incoming i
+                  ON i.AccountId = s.NetWorthAccountId AND i.Y = s.PeriodYear AND i.M = s.PeriodMonth
+                WHERE s.UserId = @userId;
+
+                WITH incoming (AccountId, Y, M, V) AS (SELECT * FROM (VALUES {source}) x (AccountId, Y, M, V))
+                INSERT INTO NetWorthSnapshots
+                    (Id, UserId, NetWorthAccountId, PeriodYear, PeriodMonth, Value, Note, RecordedAt)
+                SELECT NEWID(), @userId, i.AccountId, i.Y, i.M, i.V, NULL, @now
+                FROM incoming i
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM NetWorthSnapshots s
+                    WHERE s.UserId = @userId AND s.NetWorthAccountId = i.AccountId
+                      AND s.PeriodYear = i.Y AND s.PeriodMonth = i.M);
+
+                COMMIT;
+                """,
+                parameters);
+
+            written += batch.Count;
+        }
+
+        return written;
+    }
+
     public async Task<bool> DeleteSnapshotAsync(
         Guid userId, Guid accountId, int year, int month, CancellationToken ct = default)
     {

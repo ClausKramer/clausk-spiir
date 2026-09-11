@@ -40,8 +40,8 @@ public static class NetWorthKind
     public static bool IsKnown(string kind) => All.Contains(kind, StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Whether a kind counts against net worth. Derived here and stored on the row, so the
-    /// meaning of a kind lives in one place rather than being re-decided by each query.
+    /// Whether this kind is normally a debt. Grouping and presentation only — it does not
+    /// decide the sign of anything. Net worth is the plain sum of the recorded values.
     /// </summary>
     public static bool IsLiabilityKind(string kind) =>
         Liabilities.Contains(kind, StringComparer.OrdinalIgnoreCase);
@@ -55,8 +55,11 @@ public class NetWorthSnapshot
     public int PeriodYear { get; set; }
     public int PeriodMonth { get; set; }
     /// <summary>
-    /// For a liability, the amount owed (positive). For an asset, the balance as it stands —
-    /// negative when the account is overdrawn, which is a real state a current account reaches.
+    /// The balance as it stands, signed, whatever kind of account it is: positive for money
+    /// held, negative for money owed. Never normalised — an account is not permanently one side
+    /// of the balance, and forcing a sign would stop the data expressing the cases the
+    /// classification didn't anticipate (an overdrawn current account, an overpaid loan, a
+    /// prioritetskonto sitting in credit).
     /// </summary>
     public decimal Value { get; set; }
     public string? Note { get; set; }

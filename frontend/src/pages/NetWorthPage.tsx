@@ -55,7 +55,8 @@ export function NetWorthPage() {
 
   const assetKinds = (data?.byKind ?? []).filter((k) => !k.isLiability)
   const liabilityKinds = (data?.byKind ?? []).filter((k) => k.isLiability)
-  const maxKind = Math.max(...(data?.byKind ?? []).map((k) => k.value), 1)
+  // Bars are scaled on magnitude, since a debt's value is negative but its bar still has length.
+  const maxKind = Math.max(...(data?.byKind ?? []).map((k) => Math.abs(k.value)), 1)
 
   return (
     <div className="min-h-screen bg-[#0f1117] px-4 py-6 text-slate-200 md:px-8 md:py-8">
@@ -201,7 +202,7 @@ export function NetWorthPage() {
                 {liabilityKinds.length === 0 ? (
                   <p className="py-6 text-center text-sm text-slate-600">Nothing owed on record.</p>
                 ) : (
-                  <KindList kinds={liabilityKinds} max={maxKind} color={EXPENSE} scope={scope} year={year} liability />
+                  <KindList kinds={liabilityKinds} max={maxKind} color={EXPENSE} scope={scope} year={year} />
                 )}
               </Panel>
             </div>
@@ -226,12 +227,17 @@ export function NetWorthPage() {
                       // is inverted. Paying down a loan must not read as a loss.
                       const period = a.value - a.since
                       const month = a.value - a.sinceLastMonth
-                      const good = (v: number) => (a.isLiability ? -v : v) >= 0
+                      // With debts stored negative, up is good for everything: a mortgage going
+                      // from -500.000 to -490.000 is a rise of 10.000 and progress either way.
+                      const good = (v: number) => v >= 0
                       return (
                         <tr key={a.accountId} className="border-b border-[#1e2535] last:border-none">
                           <td className="py-2 pr-3 text-slate-300">{a.name}</td>
                           <td className="py-2 pr-3 text-slate-500">{KIND_LABELS[a.kind]}</td>
-                          <td className="py-2 pr-3 text-right font-semibold tabular-nums text-slate-200">
+                          <td
+                            className="py-2 pr-3 text-right font-semibold tabular-nums"
+                            style={{ color: a.value < 0 ? EXPENSE : '#e2e8f0' }}
+                          >
                             {kr(a.value)}
                           </td>
                           <td
@@ -282,27 +288,27 @@ function KindList({
   color,
   scope,
   year,
-  liability = false,
 }: {
   kinds: { kind: NetWorthKind; value: number; since: number; sinceLastMonth: number }[]
   max: number
   color: string
   scope: 'year' | 'lifetime'
   year: number
-  liability?: boolean
 }) {
   if (kinds.length === 0) return <p className="py-6 text-center text-sm text-slate-600">Nothing on record.</p>
   return (
     <div className="space-y-1.5">
       {kinds.map((k) => {
         const change = k.value - k.since
-        const good = (liability ? -change : change) >= 0
+        // Up is good for everything now that debts are negative.
+        const good = change >= 0
         return (
           <BarRow
             key={k.kind}
             labelWidth="w-32"
             label={KIND_LABELS[k.kind]}
-            fraction={k.value / max}
+            // Magnitude: a debt of -487.907 draws a bar 487.907 long.
+            fraction={Math.abs(k.value) / max}
             amount={kr(k.value)}
             color={color}
             metaWidth="w-28"

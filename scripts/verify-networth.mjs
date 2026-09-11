@@ -55,15 +55,29 @@ if (!dash.hasAnyRecords) {
   process.exit(0)
 }
 
+console.log('Sign convention')
+// Values are stored exactly as entered, for every kind of account. The own/owe split is by
+// sign, not by classification, so an overdrawn current account counts against you the way it
+// really does rather than being filed as an asset because of what it is called.
+const life0 = get('/networth/dashboard?scope=lifetime')
+check('liabilities are stored negative', life0.byKind.filter((k) => k.isLiability).every((k) => k.value < 0))
+check('own and owe are reported as positive magnitudes', life0.series.every((s) => s.assets >= 0 && s.liabilities >= 0))
+check('by-kind sums to net', near(life0.byKind.reduce((s, k) => s + k.value, 0), life0.latest.net))
+check('by-account sums to net', near(life0.byAccount.reduce((s, a) => s + a.value, 0), life0.latest.net))
+
 console.log('Series')
 check('net = own − owe in every month', dash.series.every((s) => near(s.net, s.assets - s.liabilities)))
 check('months are in chronological order', dash.series.every((s, i, a) => i === 0 || s.year * 100 + s.month > a[i - 1].year * 100 + a[i - 1].month))
 
 const latest = dash.latest
 console.log('Totals reconcile')
-check('by-kind assets sum to the latest assets', near(dash.byKind.filter((k) => !k.isLiability).reduce((s, k) => s + k.value, 0), latest.assets))
-check('by-kind liabilities sum to the latest liabilities', near(dash.byKind.filter((k) => k.isLiability).reduce((s, k) => s + k.value, 0), latest.liabilities))
-check('by-account nets to the same figure', near(dash.byAccount.reduce((s, a) => s + (a.isLiability ? -a.value : a.value), 0), latest.net))
+// Split by sign, matching the dashboard: what you own is what is in credit this month, not
+// everything that happens to be classified as an asset.
+const positives = dash.byAccount.filter((a) => a.value > 0).reduce((s, a) => s + a.value, 0)
+const negatives = -dash.byAccount.filter((a) => a.value < 0).reduce((s, a) => s + a.value, 0)
+check('accounts in credit sum to the latest "own"', near(positives, latest.assets))
+check('accounts in debit sum to the latest "owe"', near(negatives, latest.liabilities))
+check('by-account sums to net for the period view', near(dash.byAccount.reduce((s, a) => s + a.value, 0), latest.net))
 check('change in period = latest − first', near(latest.changeInPeriod ?? 0, dash.series.at(-1).net - dash.series[0].net))
 check('change last month = latest − previous', dash.series.length < 2 || near(latest.changeLastMonth, dash.series.at(-1).net - dash.series.at(-2).net))
 

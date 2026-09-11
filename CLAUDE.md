@@ -276,9 +276,14 @@ far back as the bank will serve. A linked account only ever *suggests* a figure.
 
 - Values are asked for from the **5th of the following month**, so what's recorded is a month
   that has finished and settled. `GET /networth/due` drives the prompt, shown on both dashboards.
-- Snapshot values are stored **positive** for assets and liabilities alike; `IsLiability` on the
-  account decides the direction. `IsLiability` is derived from `Kind` server-side and never taken
-  from the client.
+- Snapshot values are stored **exactly as entered, signed**, for every kind of account: positive
+  for money held, negative for money owed. Never normalised — an account is not permanently one
+  side of the balance (a current account goes overdrawn, a loan can be overpaid, a Nordea
+  prioritetskonto reads like a mortgage but can sit in credit), and a forced sign can only
+  express the case the classification anticipated. Net worth is the plain sum.
+- `Kind` is a label for grouping, and `IsLiability` is presentation only — neither decides a sign.
+  The own/owe split is **by sign**, so an overdrawn account counts against you however it is
+  classified.
 - Re-entering a month **upserts** — a correction must replace, not append, or the month doubles
   permanently. A blank box **deletes** that month's figure rather than leaving a stale one.
 - Accounts are **archived, not deleted**, by default: removing one rewrites every past month.

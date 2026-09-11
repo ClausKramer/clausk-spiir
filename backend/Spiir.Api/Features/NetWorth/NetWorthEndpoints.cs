@@ -182,7 +182,7 @@ public static class NetWorthEndpoints
                 a.Currency,
                 value = current.TryGetValue(a.Id, out var v) ? v : (decimal?)null,
                 previousValue = previous.TryGetValue(a.Id, out var p) ? p : (decimal?)null,
-                suggestedValue = computed.TryGetValue(a.Id, out var c) ? Math.Abs(c) : (decimal?)null,
+                suggestedValue = computed.TryGetValue(a.Id, out var c) ? c : (decimal?)null,
             }),
         });
     }
@@ -216,13 +216,11 @@ public static class NetWorthEndpoints
                 continue;
             }
 
-            // A liability is stored positive however it was typed — a mortgage is 1.2m whether
-            // entered as 1200000 or -1200000, and IsLiability carries the direction. An asset
-            // keeps its sign: a current account that is overdrawn is genuinely negative, and
-            // flipping it would record a debt as money held.
-            var account = accounts[entry.AccountId];
-            var value = account.IsLiability ? Math.Abs(entry.Value.Value) : entry.Value.Value;
-            await repo.UpsertSnapshotAsync(userId, entry.AccountId, body.Year, body.Month, value, entry.Note, ct);
+            // Stored exactly as entered. No normalising by kind: an account is not permanently
+            // one side of the balance, and a forced sign can only express the case the
+            // classification anticipated.
+            await repo.UpsertSnapshotAsync(
+                userId, entry.AccountId, body.Year, body.Month, entry.Value.Value, entry.Note, ct);
             saved++;
         }
 
@@ -290,9 +288,8 @@ public static class NetWorthEndpoints
             if (snapshot.Month is < 1 or > 12) { skipped++; continue; }
             if (!existing.TryGetValue(snapshot.Account.Trim(), out var account)) { skipped++; continue; }
 
-            // Same rule as the monthly form: a liability is magnitude, an asset keeps its sign.
-            var value = account.IsLiability ? Math.Abs(snapshot.Value) : snapshot.Value;
-            await repo.UpsertSnapshotAsync(userId, account.Id, snapshot.Year, snapshot.Month, value, null, ct);
+            // Same rule as the monthly form: stored as given, sign and all.
+            await repo.UpsertSnapshotAsync(userId, account.Id, snapshot.Year, snapshot.Month, snapshot.Value, null, ct);
             written++;
         }
 
@@ -334,11 +331,15 @@ public static class NetWorthEndpoints
         var series = points
             .GroupBy(p => (p.PeriodYear, p.PeriodMonth))
             .OrderBy(g => g.Key.PeriodYear).ThenBy(g => g.Key.PeriodMonth)
+            // Split by sign, not by classification. What you own is what is actually in credit
+            // this month, so an overdrawn current account counts against you the way it really
+            // does rather than being filed as an asset because of its kind. Net stays the plain
+            // sum either way, so the two figures always reconcile with it.
             .Select(g => new MonthTotals(
                 g.Key.PeriodYear,
                 g.Key.PeriodMonth,
-                g.Where(p => !p.IsLiability).Sum(p => p.Value),
-                g.Where(p => p.IsLiability).Sum(p => p.Value)))
+                g.Where(p => p.Value > 0).Sum(p => p.Value),
+                g.Where(p => p.Value < 0).Sum(p => -p.Value)))
             .ToList();
 
         var latest = series.LastOrDefault();

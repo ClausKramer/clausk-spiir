@@ -69,15 +69,19 @@ export function NetWorthEntryDialog({ year, month, onClose, onSaved }: Props) {
   const assets = items.filter((i) => !i.isLiability)
   const liabilities = items.filter((i) => i.isLiability)
 
+  // The sign is the data: what you type is what gets stored. Nothing here normalises it, because
+  // an account is not permanently one side of the balance — a current account goes overdrawn, a
+  // loan can be overpaid — and a forced sign can only express the anticipated case.
   const numberOf = (item: (typeof items)[number]) => {
     const raw = valueOf(item).trim().replace(/\s/g, '').replace(',', '.')
     const n = raw === '' ? NaN : Number(raw)
-    // Absolute: a mortgage is the same debt whether it was typed as 1200000 or -1200000, and
-    // the account's own side of the balance decides which way it pulls.
-    return Number.isNaN(n) ? 0 : Math.abs(n)
+    return Number.isNaN(n) ? 0 : n
   }
-  const assetTotal = assets.reduce((s, i) => s + numberOf(i), 0)
-  const liabilityTotal = liabilities.reduce((s, i) => s + numberOf(i), 0)
+  // Split by sign rather than by kind, so this running total matches what the dashboard will
+  // show: an overdrawn account counts against you whatever it happens to be called.
+  const entered = items.map(numberOf)
+  const assetTotal = entered.filter((n) => n > 0).reduce((s, n) => s + n, 0)
+  const liabilityTotal = -entered.filter((n) => n < 0).reduce((s, n) => s + n, 0)
   const filled = items.filter((i) => valueOf(i).trim() !== '').length
 
   function row(item: (typeof items)[number]) {
@@ -108,9 +112,11 @@ export function NetWorthEntryDialog({ year, month, onClose, onSaved }: Props) {
             )}
           </div>
         </div>
+        {/* Up is good whichever kind of account it is, now that debts are negative: a mortgage
+            moving from -500.000 to -490.000 is a rise of 10.000. */}
         <div className="w-16 shrink-0 text-right text-[0.7rem] tabular-nums">
           {delta !== null && delta !== 0 && (
-            <span style={{ color: (item.isLiability ? -delta : delta) >= 0 ? INCOME : EXPENSE }}>
+            <span style={{ color: delta >= 0 ? INCOME : EXPENSE }}>
               {delta > 0 ? '+' : ''}
               {kr(delta)}
             </span>
@@ -139,8 +145,8 @@ export function NetWorthEntryDialog({ year, month, onClose, onSaved }: Props) {
             What was everything worth in {MONTH_NAMES[month - 1]} {year}?
           </h2>
           <p className="mt-1 text-sm text-slate-500">
-            Enter what you owe as a positive number — it's counted against you either way. Leave a
-            box empty to record nothing for that account this month.
+            Enter each balance as it stands: what you owe as a negative number, what you hold as a
+            positive one. Leave a box empty to record nothing for that account this month.
           </p>
         </div>
 

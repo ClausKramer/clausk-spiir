@@ -9,6 +9,7 @@ using Spiir.Api.Features.Auth;
 using Spiir.Api.Features.Categories;
 using Spiir.Api.Features.Categorization;
 using Spiir.Api.Features.Sync;
+using Spiir.Api.Features.NetWorth;
 using Spiir.Api.Features.Tags;
 using Spiir.Api.Features.Transactions;
 using Spiir.Api.Features.Users;
@@ -45,6 +46,7 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUser, CurrentUserService>();
 builder.Services.AddScoped<IPasswordlessAuthenticator, PasswordlessAuthenticator>();
 builder.Services.AddScoped<DefaultDataSeeder>();
+builder.Services.AddScoped<NetWorthRepository>();
 
 // Real email delivery via Resend when configured, falling back to console-only logging (dev, or
 // before Resend:ApiKey is set) — same "not-configured" placeholder convention as the other
@@ -174,6 +176,7 @@ app.MapCategoryEndpoints();
 app.MapAccountEndpoints();
 app.MapSyncEndpoints();
 app.MapTagEndpoints();
+app.MapNetWorthEndpoints();
 
 // Dev-only: retrieve last pending magic link URL (avoids needing real email in dev)
 if (app.Environment.IsDevelopment())

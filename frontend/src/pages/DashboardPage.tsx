@@ -22,6 +22,8 @@ import { drillTo, type Measure } from '../lib/drill'
 import { BarRow } from '../components/BarRow'
 import { TAG, KIND_FIXED, KIND_VARIABLE, KIND_SAVINGS, KIND_DEBT, KIND_NONE, buildCategoryColors } from '../lib/chartColors'
 import { getCategories } from '../api/categories'
+import { getNetWorthDue } from '../api/networth'
+import { NetWorthEntryDialog } from '../components/NetWorthEntryDialog'
 
 // Validated as a categorical set against the #111620 panel surface (lightness band, chroma,
 // CVD separation, normal-vision floor, contrast). Uncategorized is deliberately outside the
@@ -153,6 +155,11 @@ export function DashboardPage() {
 
   const [markingTransfer, setMarkingTransfer] = useState<Transaction | null>(null)
 
+  // Net worth is recorded by hand once a month, so the prompt has to appear where the user
+  // already is rather than waiting on a page they might not visit.
+  const { data: netWorthDue } = useQuery({ queryKey: ['networth-due'], queryFn: getNetWorthDue })
+  const [recordingNetWorth, setRecordingNetWorth] = useState(false)
+
   // Unmarking needs no dialog — there's nothing to choose, and it only ever affects the one row.
   const { mutate: unmarkTransfer } = useMutation({
     mutationFn: (id: string) => markTransfer([id], false),
@@ -225,6 +232,12 @@ export function DashboardPage() {
             {/* Sync, recategorize, duplicate-finding and rule clearing all live on the Accounts
                 page: they change the underlying data, whereas this page only reads it. */}
             <Link
+              to="/networth"
+              className="rounded-lg border border-slate-700 bg-[#1a1f2e] px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-[#232b3b] transition-colors"
+            >
+              Net worth
+            </Link>
+            <Link
               to="/accounts"
               className="rounded-lg border border-slate-700 bg-[#1a1f2e] px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-[#232b3b] transition-colors"
             >
@@ -239,6 +252,33 @@ export function DashboardPage() {
             </button>
           </div>
         </div>
+
+        {netWorthDue?.isDue && (
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-indigo-500/40 bg-indigo-500/10 px-4 py-3">
+            <div className="text-sm text-indigo-200">
+              <span className="font-semibold">
+                Record what everything was worth in {MONTH_NAMES[netWorthDue.month - 1]} {netWorthDue.year}.
+              </span>{' '}
+              <span className="text-indigo-300/80">
+                {netWorthDue.missingCount} of {netWorthDue.accountCount} still to go.
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setRecordingNetWorth(true)}
+                className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700"
+              >
+                Enter values
+              </button>
+              <Link
+                to="/networth"
+                className="rounded-lg border border-indigo-500/40 px-3 py-1.5 text-xs font-medium text-indigo-200 hover:bg-indigo-500/10"
+              >
+                Open net worth
+              </Link>
+            </div>
+          </div>
+        )}
 
         {/* Period */}
         <div className="mb-4">
@@ -726,6 +766,15 @@ export function DashboardPage() {
               )}
             </Section>
           </>
+        )}
+
+        {recordingNetWorth && netWorthDue && (
+          <NetWorthEntryDialog
+            year={netWorthDue.year}
+            month={netWorthDue.month}
+            onClose={() => setRecordingNetWorth(false)}
+            onSaved={() => {}}
+          />
         )}
 
         {markingTransfer && (

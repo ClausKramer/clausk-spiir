@@ -1,0 +1,343 @@
+using Spiir.Api.Data.Repositories;
+using Spiir.Api.Domain.Entities;
+using Spiir.Api.Services;
+
+namespace Spiir.Api.Features.NetWorth;
+
+public static class NetWorthEndpoints
+{
+    // Values are asked for after the 5th: bank statements, pension and investment valuations for
+    // the previous month are generally settled by then, so a figure recorded earlier would be
+    // guesswork that the month then keeps forever.
+    private const int RecordFromDay = 5;
+
+    public static IEndpointRouteBuilder MapNetWorthEndpoints(this IEndpointRouteBuilder app)
+    {
+        var group = app.MapGroup("/networth").WithTags("NetWorth").RequireAuthorization();
+
+        group.MapGet("/accounts", GetAccounts);
+        group.MapPost("/accounts", CreateAccount);
+        group.MapPatch("/accounts/{id:guid}", UpdateAccount);
+        group.MapDelete("/accounts/{id:guid}", DeleteAccount);
+
+        group.MapGet("/due", GetDue);
+        group.MapGet("/entry", GetEntryForm);
+        group.MapPost("/entry", SaveEntry);
+
+        group.MapGet("/dashboard", GetDashboard);
+
+        return app;
+    }
+
+    private static DateOnly Today => DateOnly.FromDateTime(DateTime.UtcNow);
+
+    private static async Task<IResult> GetAccounts(
+        NetWorthRepository repo, ICurrentUser currentUser, bool includeArchived = false,
+        CancellationToken ct = default)
+    {
+        var accounts = await repo.GetAccountsAsync(currentUser.GetRequiredUserId(), includeArchived, ct);
+        return TypedResults.Ok(accounts.Select(a => new
+        {
+            a.Id, a.Name, a.Kind, a.IsLiability, a.Currency, a.BankAccountId, a.IsArchived, a.SortOrder,
+        }));
+    }
+
+    private record AccountRequest(string Name, string Kind, Guid? BankAccountId, bool IsArchived = false);
+
+    private static async Task<IResult> CreateAccount(
+        AccountRequest body, NetWorthRepository repo, ICurrentUser currentUser, CancellationToken ct = default)
+    {
+        var name = body.Name?.Trim();
+        if (string.IsNullOrWhiteSpace(name))
+            return TypedResults.BadRequest(new { error = "A name is required." });
+        if (!NetWorthKind.IsKnown(body.Kind))
+            return TypedResults.BadRequest(new { error = $"Unknown kind '{body.Kind}'." });
+
+        var userId = currentUser.GetRequiredUserId();
+        var existing = await repo.GetAccountsAsync(userId, includeArchived: true, ct);
+
+        var account = new NetWorthAccount
+        {
+            Id = Guid.NewGuid(),
+            UserId = userId,
+            Name = name,
+            Kind = body.Kind,
+            // Derived, never taken from the client: the caller shouldn't be able to file a
+            // mortgage as an asset and quietly double its effect on net worth.
+            IsLiability = NetWorthKind.IsLiabilityKind(body.Kind),
+            BankAccountId = body.BankAccountId,
+            SortOrder = existing.Count,
+            CreatedAt = DateTime.UtcNow,
+        };
+        await repo.InsertAccountAsync(account, ct);
+
+        return TypedResults.Ok(new { account.Id, account.Name, account.Kind, account.IsLiability });
+    }
+
+    private static async Task<IResult> UpdateAccount(
+        Guid id, AccountRequest body, NetWorthRepository repo, ICurrentUser currentUser,
+        CancellationToken ct = default)
+    {
+        var name = body.Name?.Trim();
+        if (string.IsNullOrWhiteSpace(name))
+            return TypedResults.BadRequest(new { error = "A name is required." });
+        if (!NetWorthKind.IsKnown(body.Kind))
+            return TypedResults.BadRequest(new { error = $"Unknown kind '{body.Kind}'." });
+
+        var updated = await repo.UpdateAccountAsync(
+            currentUser.GetRequiredUserId(), id, name, body.Kind,
+            NetWorthKind.IsLiabilityKind(body.Kind), body.BankAccountId, body.IsArchived, ct);
+
+        return updated ? TypedResults.NoContent() : TypedResults.NotFound();
+    }
+
+    private static async Task<IResult> DeleteAccount(
+        Guid id, NetWorthRepository repo, ICurrentUser currentUser, CancellationToken ct = default)
+    {
+        var deleted = await repo.DeleteAccountAsync(currentUser.GetRequiredUserId(), id, ct);
+        return deleted ? TypedResults.NoContent() : TypedResults.NotFound();
+    }
+
+    // The month being asked for. A month becomes askable on the 5th of the month *after* it, so
+    // what is recorded is always a month that has finished and settled: from the 5th of October
+    // you are asked for September, and before that for August.
+    private static (int Year, int Month) MonthBeingRecorded()
+    {
+        var today = Today;
+        // Before the 5th, the most recent month you can sensibly value is the one before last.
+        var anchor = today.Day >= RecordFromDay ? today : today.AddMonths(-1);
+        var previous = anchor.AddMonths(-1);
+        return (previous.Year, previous.Month);
+    }
+
+    private static async Task<IResult> GetDue(
+        NetWorthRepository repo, ICurrentUser currentUser, CancellationToken ct = default)
+    {
+        var userId = currentUser.GetRequiredUserId();
+        var accounts = await repo.GetAccountsAsync(userId, includeArchived: false, ct);
+        var (year, month) = MonthBeingRecorded();
+        var recorded = await repo.GetRecordedAccountIdsAsync(userId, year, month, ct);
+
+        var missing = accounts.Where(a => !recorded.Contains(a.Id)).ToList();
+
+        return TypedResults.Ok(new
+        {
+            year,
+            month,
+            // Nothing to ask for before the 5th of the following month, and nothing to ask for
+            // if there are no accounts to value yet.
+            isDue = accounts.Count > 0 && Today.Day >= RecordFromDay && missing.Count > 0,
+            accountCount = accounts.Count,
+            missingCount = missing.Count,
+            missing = missing.Select(a => new { a.Id, a.Name, a.Kind, a.IsLiability }),
+        });
+    }
+
+    // The entry form for one month: every account, with the last figure recorded for it as a
+    // starting point. A month already recorded comes back with its own values, so the same form
+    // is used to correct a month as to enter one.
+    private static async Task<IResult> GetEntryForm(
+        NetWorthRepository repo,
+        TransactionRepository transactions,
+        ICurrentUser currentUser,
+        int? year = null,
+        int? month = null,
+        CancellationToken ct = default)
+    {
+        var userId = currentUser.GetRequiredUserId();
+        var (defaultYear, defaultMonth) = MonthBeingRecorded();
+        var y = year ?? defaultYear;
+        var m = month ?? defaultMonth;
+
+        var accounts = await repo.GetAccountsAsync(userId, includeArchived: false, ct);
+        var current = (await repo.GetPointsAsync(userId, y, ct))
+            .Where(p => p.PeriodMonth == m)
+            .ToDictionary(p => p.NetWorthAccountId, p => p.Value);
+        var previous = await repo.GetLatestValuesAsync(userId, y, m, ct);
+
+        // For a linked account, what our own transaction history says the balance is — a
+        // suggestion only, and deliberately labelled as such: it is a running sum of whatever
+        // history the bank served, which is not the same thing as the balance.
+        var asOf = new DateOnly(y, m, DateTime.DaysInMonth(y, m));
+        var linked = accounts.Where(a => a.BankAccountId is not null).ToList();
+        var computed = new Dictionary<Guid, decimal>();
+        foreach (var account in linked)
+        {
+            computed[account.Id] = await transactions.GetNetBalanceAsync(
+                userId, [account.BankAccountId!.Value], asOf, ct);
+        }
+
+        return TypedResults.Ok(new
+        {
+            year = y,
+            month = m,
+            items = accounts.Select(a => new
+            {
+                a.Id,
+                a.Name,
+                a.Kind,
+                a.IsLiability,
+                a.Currency,
+                value = current.TryGetValue(a.Id, out var v) ? v : (decimal?)null,
+                previousValue = previous.TryGetValue(a.Id, out var p) ? p : (decimal?)null,
+                suggestedValue = computed.TryGetValue(a.Id, out var c) ? Math.Abs(c) : (decimal?)null,
+            }),
+        });
+    }
+
+    private record EntryRequest(int Year, int Month, EntryValue[] Values);
+    private record EntryValue(Guid AccountId, decimal? Value, string? Note);
+
+    private static async Task<IResult> SaveEntry(
+        EntryRequest body, NetWorthRepository repo, ICurrentUser currentUser, CancellationToken ct = default)
+    {
+        if (body.Month is < 1 or > 12)
+            return TypedResults.BadRequest(new { error = "Month must be 1-12." });
+
+        var userId = currentUser.GetRequiredUserId();
+        var accounts = (await repo.GetAccountsAsync(userId, includeArchived: true, ct))
+            .ToDictionary(a => a.Id);
+
+        var saved = 0;
+        var cleared = 0;
+        foreach (var entry in body.Values)
+        {
+            // Silently ignoring an unknown id would let a bad request half-succeed; skipping it
+            // keeps the operation total while never writing against someone else's account.
+            if (!accounts.ContainsKey(entry.AccountId)) continue;
+
+            if (entry.Value is null)
+            {
+                // A blank box means "I don't have a figure for this month", which must remove any
+                // stale value rather than leave last month's standing in for it.
+                if (await repo.DeleteSnapshotAsync(userId, entry.AccountId, body.Year, body.Month, ct)) cleared++;
+                continue;
+            }
+
+            // Stored positive regardless of how it was typed: a mortgage is 1.2m whether the
+            // user entered it as 1200000 or -1200000, and IsLiability decides the direction.
+            await repo.UpsertSnapshotAsync(
+                userId, entry.AccountId, body.Year, body.Month, Math.Abs(entry.Value.Value), entry.Note, ct);
+            saved++;
+        }
+
+        return TypedResults.Ok(new
+        {
+            saved,
+            cleared,
+            message = (saved, cleared) switch
+            {
+                (0, 0) => "Nothing recorded.",
+                (0, var c) => $"Cleared {c} value(s) for {body.Year}-{body.Month:00}.",
+                (var s2, 0) => $"Recorded {s2} value(s) for {body.Year}-{body.Month:00}.",
+                var (s2, c) => $"Recorded {s2} and cleared {c} value(s) for {body.Year}-{body.Month:00}.",
+            },
+        });
+    }
+
+    private record MonthTotals(int Year, int Month, decimal Assets, decimal Liabilities)
+    {
+        public decimal Net => Assets - Liabilities;
+    }
+
+    // The progress view. scope=lifetime spans every recorded month; otherwise one calendar year.
+    private static async Task<IResult> GetDashboard(
+        NetWorthRepository repo,
+        ICurrentUser currentUser,
+        int? year = null,
+        string scope = "year",
+        CancellationToken ct = default)
+    {
+        var userId = currentUser.GetRequiredUserId();
+        var lifetime = scope.Equals("lifetime", StringComparison.OrdinalIgnoreCase);
+        var targetYear = year ?? Today.Year;
+
+        var points = await repo.GetPointsAsync(userId, lifetime ? null : targetYear, ct);
+        var recordedYears = await repo.GetRecordedYearsAsync(userId, ct);
+        var accounts = await repo.GetAccountsAsync(userId, includeArchived: true, ct);
+
+        // One row per month that has any recording at all. Months nobody recorded are absent
+        // rather than zero — a gap in the record is not a month where everything was worth
+        // nothing, and plotting it as zero would draw a cliff that never happened.
+        var series = points
+            .GroupBy(p => (p.PeriodYear, p.PeriodMonth))
+            .OrderBy(g => g.Key.PeriodYear).ThenBy(g => g.Key.PeriodMonth)
+            .Select(g => new MonthTotals(
+                g.Key.PeriodYear,
+                g.Key.PeriodMonth,
+                g.Where(p => !p.IsLiability).Sum(p => p.Value),
+                g.Where(p => p.IsLiability).Sum(p => p.Value)))
+            .ToList();
+
+        var latest = series.LastOrDefault();
+        var first = series.FirstOrDefault();
+        var previous = series.Count >= 2 ? series[^2] : null;
+
+        // Per kind, at the latest month, plus how it moved. This is what makes "are the loans
+        // falling and the investments rising" answerable — a single net figure can rise while
+        // debt rises too, and that is exactly the case worth catching.
+        var latestKey = latest is null ? (0, 0) : (latest.Year, latest.Month);
+        var firstKey = first is null ? (0, 0) : (first.Year, first.Month);
+        var previousKey = previous is null ? (0, 0) : (previous.Year, previous.Month);
+
+        decimal SumFor((int, int) key, Func<NetWorthPoint, bool> predicate) => points
+            .Where(p => (p.PeriodYear, p.PeriodMonth) == key && predicate(p))
+            .Sum(p => p.Value);
+
+        var byKind = points
+            .Where(p => (p.PeriodYear, p.PeriodMonth) == latestKey)
+            .GroupBy(p => p.Kind)
+            .Select(g => new
+            {
+                kind = g.Key,
+                isLiability = g.First().IsLiability,
+                value = g.Sum(p => p.Value),
+                // Movement is measured against the first month in view, so the year view answers
+                // "how has this moved this year" and lifetime answers it since records began.
+                since = SumFor(firstKey, p => p.Kind == g.Key),
+                sinceLastMonth = SumFor(previousKey, p => p.Kind == g.Key),
+            })
+            .OrderByDescending(k => k.value)
+            .ToList();
+
+        var byAccount = points
+            .Where(p => (p.PeriodYear, p.PeriodMonth) == latestKey)
+            .Select(p => new
+            {
+                accountId = p.NetWorthAccountId,
+                name = p.AccountName,
+                p.Kind,
+                p.IsLiability,
+                value = p.Value,
+                since = SumFor(firstKey, x => x.NetWorthAccountId == p.NetWorthAccountId),
+                sinceLastMonth = SumFor(previousKey, x => x.NetWorthAccountId == p.NetWorthAccountId),
+            })
+            .OrderBy(a => a.IsLiability).ThenByDescending(a => a.value)
+            .ToList();
+
+        return TypedResults.Ok(new
+        {
+            scope = lifetime ? "lifetime" : "year",
+            year = lifetime ? (int?)null : targetYear,
+            // Always includes the selected year, so the picker can represent its own selection
+            // even before anything is recorded in it.
+            availableYears = recordedYears.Append(targetYear).Append(Today.Year)
+                .Distinct().OrderDescending().ToList(),
+            hasAnyRecords = recordedYears.Count > 0,
+            accountCount = accounts.Count(a => !a.IsArchived),
+            series = series.Select(s => new { s.Year, s.Month, s.Assets, s.Liabilities, s.Net }),
+            latest = latest is null ? null : new
+            {
+                latest.Year, latest.Month, latest.Assets, latest.Liabilities, latest.Net,
+                // Change over the period in view, and over the last recorded month. Null rather
+                // than zero when there's nothing to compare against — one data point is not a
+                // trend, and "+0" would claim it was flat.
+                changeInPeriod = first is null || first == latest ? (decimal?)null : latest.Net - first.Net,
+                changeLastMonth = previous is null ? (decimal?)null : latest.Net - previous.Net,
+                monthsRecorded = series.Count,
+            },
+            byKind,
+            byAccount,
+        });
+    }
+}

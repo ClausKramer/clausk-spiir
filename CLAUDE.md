@@ -262,3 +262,27 @@ node scripts/verify-bar-scales.mjs --year <year>   # needs the API running local
 ```bash
 node --experimental-strip-types scripts/verify-category-colors.mjs
 ```
+
+## Net worth (second dashboard)
+
+`/networth` is a separate dashboard from the spending one, backed by its own tables
+(`Schema/0007_NetWorth.sql`): `NetWorthAccounts` (what's tracked, and its `Kind`) and
+`NetWorthSnapshots` (one value per account per month).
+
+It is **recorded by hand, not derived**. Most of what makes up net worth never appears in a PSD2
+feed — pension, property, mortgage, an investment account elsewhere — and even for a connected
+account the running sum of synced transactions is not the balance, since history only reaches as
+far back as the bank will serve. A linked account only ever *suggests* a figure.
+
+- Values are asked for from the **5th of the following month**, so what's recorded is a month
+  that has finished and settled. `GET /networth/due` drives the prompt, shown on both dashboards.
+- Snapshot values are stored **positive** for assets and liabilities alike; `IsLiability` on the
+  account decides the direction. `IsLiability` is derived from `Kind` server-side and never taken
+  from the client.
+- Re-entering a month **upserts** — a correction must replace, not append, or the month doubles
+  permanently. A blank box **deletes** that month's figure rather than leaving a stale one.
+- Accounts are **archived, not deleted**, by default: removing one rewrites every past month.
+
+```bash
+node scripts/verify-networth.mjs --year <year>   # needs the API running locally
+```

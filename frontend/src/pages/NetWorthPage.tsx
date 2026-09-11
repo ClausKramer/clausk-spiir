@@ -50,6 +50,26 @@ export function NetWorthPage() {
   })
   const { data: due } = useQuery({ queryKey: ['networth-due'], queryFn: getNetWorthDue })
 
+  const { mutate: runImport, isPending: importing } = useMutation({
+    mutationFn: async (file: File) => {
+      const payload = JSON.parse(await file.text())
+      if (!Array.isArray(payload?.accounts) || !Array.isArray(payload?.snapshots))
+        throw new Error('That file does not look like a net worth export.')
+      return importNetWorth(payload)
+    },
+    onSuccess: (result) => {
+      qc.invalidateQueries({ queryKey: ['networth-dashboard'] })
+      qc.invalidateQueries({ queryKey: ['networth-due'] })
+      qc.invalidateQueries({ queryKey: ['networth-accounts'] })
+      qc.invalidateQueries({ queryKey: ['networth-entry'] })
+      setStatus(result.message)
+      setManaging(false)
+    },
+    // Surfaced rather than swallowed: an import that fails silently looks exactly like an
+    // import that was never started, which is the confusing case.
+    onError: (e: Error) => setStatus(e.message || 'Import failed.'),
+  })
+
   const latest = data?.latest
   const series = data?.series ?? []
 
@@ -162,12 +182,23 @@ export function NetWorthPage() {
                   ? 'Add the things you own and owe — savings, investments, pension, property, loans — then record what each is worth once a month.'
                   : 'Record what each account is worth and the picture starts here.'}
               </p>
-              <button
-                onClick={() => (data?.accountCount === 0 ? setManaging(true) : setEntryFor({ year, month: new Date().getMonth() + 1 }))}
-                className="mt-4 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
-              >
-                {data?.accountCount === 0 ? 'Add accounts' : 'Record values'}
-              </button>
+              <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+                <button
+                  onClick={() => (data?.accountCount === 0 ? setManaging(true) : setEntryFor({ year, month: new Date().getMonth() + 1 }))}
+                  className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+                >
+                  {data?.accountCount === 0 ? 'Add accounts' : 'Record values'}
+                </button>
+                <ImportButton
+                  importing={importing}
+                  onPick={(f) => runImport(f)}
+                  label="Import from a file"
+                  className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-medium text-slate-300 hover:bg-[#232b3b]"
+                />
+              </div>
+              <p className="mt-3 text-xs text-slate-600">
+                Already keep this in a spreadsheet? Import the exported JSON — it's safe to run twice.
+              </p>
             </div>
           </Panel>
         ) : (
@@ -277,7 +308,14 @@ export function NetWorthPage() {
           }}
         />
       )}
-      {managing && <ManageAccountsDialog onClose={() => setManaging(false)} onChanged={setStatus} />}
+      {managing && (
+        <ManageAccountsDialog
+          onClose={() => setManaging(false)}
+          onChanged={setStatus}
+          runImport={runImport}
+          importing={importing}
+        />
+      )}
     </div>
   )
 }
@@ -330,7 +368,18 @@ function KindList({
 
 // Managing what gets tracked. Archive is the default way to retire an account; deleting is
 // offered but warns, because removing an account silently rewrites every past month.
-function ManageAccountsDialog({ onClose, onChanged }: { onClose: () => void; onChanged: (m: string) => void }) {
+function ManageAccountsDialog({
+  onClose,
+  onChanged,
+  runImport,
+  importing,
+}: {
+  onClose: () => void
+  onChanged: (m: string) => void
+  // Owned by the page, because the empty state offers it too.
+  runImport: (file: File) => void
+  importing: boolean
+}) {
   const qc = useQueryClient()
   const { data: accounts = [], isLoading } = useQuery({
     queryKey: ['networth-accounts'],
@@ -368,23 +417,6 @@ function ManageAccountsDialog({ onClose, onChanged }: { onClose: () => void; onC
     },
   })
 
-  // Bulk import from a file produced by scripts/parse-networth-xlsx.mjs. Kept behind a file
-  // picker rather than parsing a spreadsheet in the browser: the parsing needs checking against
-  // the workbook's own totals, and that check belongs somewhere it can be re-run, not in a
-  // one-shot upload.
-  const { mutate: runImport, isPending: importing } = useMutation({
-    mutationFn: async (file: File) => {
-      const payload = JSON.parse(await file.text())
-      if (!Array.isArray(payload?.accounts) || !Array.isArray(payload?.snapshots))
-        throw new Error('That file does not look like a net worth export.')
-      return importNetWorth(payload)
-    },
-    onSuccess: (result) => {
-      refresh()
-      onChanged(result.message)
-    },
-    onError: (e: Error) => onChanged(e.message ?? 'Import failed.'),
-  })
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
@@ -502,26 +534,51 @@ function ManageAccountsDialog({ onClose, onChanged }: { onClose: () => void; onC
             </button>
           </form>
 
-          <label className="mt-3 flex cursor-pointer items-center gap-2 text-xs text-slate-500">
-            <input
-              type="file"
-              accept="application/json,.json"
-              disabled={importing}
-              onChange={(e) => {
-                const file = e.target.files?.[0]
-                if (file) runImport(file)
-                e.target.value = ''
-              }}
-              className="hidden"
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+            <ImportButton
+              importing={importing}
+              onPick={(f) => runImport(f)}
+              label="Import history…"
+              className="rounded border border-slate-700 px-2.5 py-1 text-slate-400 hover:bg-[#232b3b]"
             />
-            <span className="rounded border border-slate-700 px-2.5 py-1 text-slate-400 hover:bg-[#232b3b]">
-              {importing ? 'Importing…' : 'Import history…'}
-            </span>
             <span>a JSON export of an existing spreadsheet. Safe to run twice.</span>
-          </label>
+          </div>
         </div>
       </div>
     </div>
+  )
+}
+
+// The file input is sr-only rather than display:none. A `hidden` input inside a label is
+// unreliable on mobile browsers — some refuse to open the picker for an element that isn't
+// rendered — and this is exactly the case where the file lives on a phone.
+function ImportButton({
+  onPick,
+  importing,
+  className,
+  label,
+}: {
+  onPick: (file: File) => void
+  importing: boolean
+  className: string
+  label: string
+}) {
+  return (
+    <label className={`${className} ${importing ? 'opacity-60' : 'cursor-pointer'}`}>
+      <input
+        type="file"
+        accept="application/json,.json"
+        disabled={importing}
+        onChange={(e) => {
+          const file = e.target.files?.[0]
+          if (file) onPick(file)
+          // Cleared so picking the same file twice still fires a change event.
+          e.target.value = ''
+        }}
+        className="sr-only"
+      />
+      {importing ? 'Importing…' : label}
+    </label>
   )
 }
 

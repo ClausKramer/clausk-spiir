@@ -35,7 +35,14 @@ function niceTicks(min: number, max: number, count = 5): number[] {
 // Liabilities are drawn downward rather than as a second upward bar because that is what they
 // do to the figure — the gap between the two bars is the net, readable without arithmetic.
 // Drawing both upward would invite reading them as two kinds of the same thing.
-export function NetWorthChart({ data }: { data: NetWorthPoint[] }) {
+export function NetWorthChart({
+  data,
+  onSelect,
+}: {
+  data: NetWorthPoint[]
+  /** Opens a month for editing. Optional so the chart stays usable as a plain read-only view. */
+  onSelect?: (point: NetWorthPoint) => void
+}) {
   const [hover, setHover] = useState<number | null>(null)
 
   if (data.length === 0)
@@ -115,6 +122,23 @@ export function NetWorthChart({ data }: { data: NetWorthPoint[] }) {
             fill="transparent"
             onMouseEnter={() => setHover(i)}
             onMouseLeave={() => setHover(null)}
+            onFocus={() => setHover(i)}
+            onBlur={() => setHover(null)}
+            onClick={onSelect ? () => onSelect(d) : undefined}
+            onKeyDown={
+              onSelect
+                ? (e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      onSelect(d)
+                    }
+                  }
+                : undefined
+            }
+            tabIndex={onSelect ? 0 : undefined}
+            role={onSelect ? 'button' : undefined}
+            aria-label={onSelect ? `Edit ${MONTH_NAMES[d.month - 1]} ${d.year}` : undefined}
+            className={onSelect ? 'cursor-pointer focus:outline-none' : undefined}
           />
         ))}
         {hover !== null && (

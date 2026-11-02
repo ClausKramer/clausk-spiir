@@ -33,7 +33,11 @@ public class RefreshTokenRepository(IDbConnectionFactory connectionFactory)
             new { tokenHash, now },
             splitOn: "Id");
 
-        return rows.FirstOrDefault();
+        // Not rows.FirstOrDefault(): the rows are non-nullable tuples, so an empty result gives
+        // (null, null) — which converts to a *non-null* nullable tuple, slips past the caller's
+        // "?? throw", and turned every invalid or revoked token into a 500 instead of a 401.
+        var list = rows.AsList();
+        return list.Count == 0 ? null : list[0];
     }
 
     public async Task RevokeAsync(Guid id, DateTime revokedAt, CancellationToken ct = default)

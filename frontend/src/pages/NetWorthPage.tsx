@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
@@ -9,6 +9,7 @@ import {
   updateNetWorthAccount,
   deleteNetWorthAccount,
   importNetWorth,
+  saveNetWorthEntry,
   KIND_LABELS,
   ASSET_KINDS,
   LIABILITY_KINDS,
@@ -43,7 +44,13 @@ export function NetWorthPage() {
   const [managing, setManaging] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
 
-  const { data, isLoading } = useQuery({
+  const {
+    data,
+    isLoading,
+    isError,
+    refetch,
+    isRefetching,
+  } = useQuery({
     queryKey: ['networth-dashboard', scope, year],
     queryFn: () => getNetWorthDashboard(scope, scope === 'lifetime' ? undefined : year),
     placeholderData: (prev) => prev,
@@ -72,6 +79,26 @@ export function NetWorthPage() {
 
   const latest = data?.latest
   const series = data?.series ?? []
+
+  // Corrects one account's figure for the latest month on screen, straight from the table. Only
+  // the one value is sent: the entry endpoint touches just the accounts it is given, so the rest
+  // of the month is left exactly as it was.
+  const { mutateAsync: saveOne } = useMutation({
+    mutationFn: (v: { accountId: string; value: number }) =>
+      saveNetWorthEntry({
+        year: latest!.year,
+        month: latest!.month,
+        values: [{ accountId: v.accountId, value: v.value }],
+      }),
+    onSuccess: (result) => {
+      qc.invalidateQueries({ queryKey: ['networth-dashboard'] })
+      qc.invalidateQueries({ queryKey: ['networth-due'] })
+      qc.invalidateQueries({ queryKey: ['networth-entry'] })
+      setStatus(result.message)
+    },
+    // Surfaced on the page: a failed save that quietly reverts looks exactly like one that worked.
+    onError: () => setStatus("Couldn't save that figure — the request failed, so nothing was changed."),
+  })
 
   const assetKinds = (data?.byKind ?? []).filter((k) => !k.isLiability)
   const liabilityKinds = (data?.byKind ?? []).filter((k) => k.isLiability)
@@ -173,6 +200,23 @@ export function NetWorthPage() {
           <div className="flex justify-center py-20">
             <div className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-600 border-t-transparent" />
           </div>
+        ) : isError && !data ? (
+          <Panel title="Couldn't load net worth">
+            <div className="py-8 text-center">
+              <div className="mb-2 text-3xl">⚠️</div>
+              <p className="text-slate-400">
+                The request failed — this does not mean your accounts or history are gone, just that
+                this page couldn't reach them just now.
+              </p>
+              <button
+                onClick={() => refetch()}
+                disabled={isRefetching}
+                className="mt-4 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {isRefetching ? 'Retrying…' : 'Try again'}
+              </button>
+            </div>
+          </Panel>
         ) : !data?.hasAnyRecords ? (
           <Panel title="Nothing recorded yet">
             <div className="py-8 text-center">
@@ -220,7 +264,10 @@ export function NetWorthPage() {
             </div>
 
             <Panel title={`📈 Net worth over time — ${scope === 'lifetime' ? 'all records' : year}`}>
-              <NetWorthChart data={series} />
+              <NetWorthChart data={series} onSelect={(p) => setEntryFor({ year: p.year, month: p.month })} />
+              <p className="mt-2 text-center text-[0.68rem] text-slate-600">
+                Click a month to see and correct its figures.
+              </p>
             </Panel>
 
             {/* The question a single net figure can't answer: net worth can rise while debt
@@ -245,7 +292,9 @@ export function NetWorthPage() {
                     <tr className="border-b border-[#232b3b] text-left text-[0.68rem] uppercase tracking-wider text-slate-600">
                       <th className="py-2 pr-3 font-medium">Account</th>
                       <th className="py-2 pr-3 font-medium">Kind</th>
-                      <th className="py-2 pr-3 text-right font-medium">Latest</th>
+                      <th className="py-2 pr-3 text-right font-medium">
+                        Latest · {MONTH_NAMES[latest!.month - 1]} {String(latest!.year).slice(2)}
+                      </th>
                       <th className="py-2 pr-3 text-right font-medium">Last month</th>
                       <th className="py-2 pl-3 text-right font-medium">
                         {scope === 'lifetime' ? 'Since start' : `In ${year}`}
@@ -265,11 +314,13 @@ export function NetWorthPage() {
                         <tr key={a.accountId} className="border-b border-[#1e2535] last:border-none">
                           <td className="py-2 pr-3 text-slate-300">{a.name}</td>
                           <td className="py-2 pr-3 text-slate-500">{KIND_LABELS[a.kind]}</td>
-                          <td
-                            className="py-2 pr-3 text-right font-semibold tabular-nums"
-                            style={{ color: a.value < 0 ? EXPENSE : '#e2e8f0' }}
-                          >
-                            {kr(a.value)}
+                          <td className="py-2 pr-3 text-right">
+                            <EditableValue
+                              value={a.value}
+                              label={`${a.name} for ${MONTH_NAMES[latest!.month - 1]} ${latest!.year}`}
+                              color={a.value < 0 ? EXPENSE : '#e2e8f0'}
+                              onSave={(value) => saveOne({ accountId: a.accountId, value })}
+                            />
                           </td>
                           <td
                             className="py-2 pr-3 text-right tabular-nums"
@@ -290,7 +341,8 @@ export function NetWorthPage() {
                 </table>
               </div>
               <p className="mt-3 text-[0.68rem] text-slate-600">
-                Green is movement in your favour — assets up, debt down.
+                Green is movement in your favour — assets up, debt down. Click a figure to correct it; to
+                clear a month’s figure altogether, use Record values.
               </p>
             </Panel>
           </>
@@ -579,6 +631,94 @@ function ImportButton({
       />
       {importing ? 'Importing…' : label}
     </label>
+  )
+}
+
+// A figure that turns into a box when clicked. Enter or leaving the box saves, Escape abandons.
+//
+// An empty, unreadable or unchanged entry leaves the figure alone rather than clearing it: wiping
+// a month's value is a deliberate act with its own place (the monthly form), and a stray blur on a
+// half-cleared box must not be able to do it.
+function EditableValue({
+  value,
+  label,
+  color,
+  onSave,
+}: {
+  value: number
+  label: string
+  color: string
+  onSave: (value: number) => Promise<unknown>
+}) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [saving, setSaving] = useState(false)
+  // Escape unmounts the box, and some browsers still fire a blur as it goes — which would then
+  // save what was just abandoned.
+  const abandoned = useRef(false)
+
+  const commit = async () => {
+    if (saving) return
+    if (abandoned.current) {
+      abandoned.current = false
+      return
+    }
+    const raw = draft.trim().replace(/\s/g, '').replace(',', '.')
+    const parsed = raw === '' ? NaN : Number(raw)
+    if (Number.isNaN(parsed) || parsed === value) {
+      setEditing(false)
+      return
+    }
+    setSaving(true)
+    try {
+      await onSave(parsed)
+      setEditing(false)
+    } catch {
+      // The page reports the failure; the box stays open with what was typed so it can be retried.
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={() => {
+          abandoned.current = false
+          setDraft(String(value))
+          setEditing(true)
+        }}
+        className="-mx-1 rounded px-1 font-semibold tabular-nums underline decoration-slate-600 decoration-dotted underline-offset-4 hover:bg-white/[0.06]"
+        style={{ color }}
+        title={`Correct ${label}`}
+      >
+        {kr(value)}
+      </button>
+    )
+  }
+
+  return (
+    <input
+      autoFocus
+      inputMode="decimal"
+      value={draft}
+      disabled={saving}
+      // Opens with the figure selected, so typing replaces it. Without this, correcting 18000
+      // means deleting it first, and typing a new number straight away appends to the old one.
+      onFocus={(e) => e.target.select()}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') commit()
+        if (e.key === 'Escape') {
+          abandoned.current = true
+          setEditing(false)
+        }
+      }}
+      aria-label={label}
+      className="w-32 rounded border border-indigo-500 bg-[#111620] px-2 py-1 text-right text-sm tabular-nums text-slate-200 outline-none disabled:opacity-60"
+    />
   )
 }
 

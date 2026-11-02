@@ -77,10 +77,14 @@ public class PasswordlessAuthenticator(
         var found = await refreshTokens.GetValidWithUserByHashAsync(hash, now, ct)
             ?? throw new InvalidOperationException("Refresh token is invalid or expired.");
 
-        // Rotate: revoke old, issue new
+        // Rotate: issue the new token first, then revoke the old one. The other way round, a
+        // failure between the two (the database dropping out mid-request) leaves you holding a
+        // token that has been revoked and no replacement, which signs you out for good. This way
+        // the worst case is the old token staying valid a little longer.
+        var result = await IssueTokensAsync(found.User, ct);
         await refreshTokens.RevokeAsync(found.Token.Id, now, ct);
 
-        return await IssueTokensAsync(found.User, ct);
+        return result;
     }
 
     public async Task RevokeRefreshTokenAsync(string rawRefreshToken, CancellationToken ct = default)

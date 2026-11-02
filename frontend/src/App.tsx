@@ -11,6 +11,8 @@ import { CategoryDashboardPage } from './pages/CategoryDashboardPage'
 import { FlowDashboardPage } from './pages/FlowDashboardPage'
 import { TransactionsQueryPage } from './pages/TransactionsQueryPage'
 import { NetWorthPage } from './pages/NetWorthPage'
+import { BudgetsPage } from './pages/BudgetsPage'
+import { RecurringPage } from './pages/RecurringPage'
 import { PrivacyPage } from './pages/PrivacyPage'
 import { TermsPage } from './pages/TermsPage'
 import { ProtectedRoute } from './components/ProtectedRoute'
@@ -38,6 +40,8 @@ export function App() {
           <Route path="/accounts/:id/transactions" element={<ProtectedRoute><AccountTransactionsPage /></ProtectedRoute>} />
           <Route path="/spending/:categoryId" element={<ProtectedRoute><CategoryDashboardPage /></ProtectedRoute>} />
           <Route path="/networth" element={<ProtectedRoute><NetWorthPage /></ProtectedRoute>} />
+          <Route path="/budgets" element={<ProtectedRoute><BudgetsPage /></ProtectedRoute>} />
+          <Route path="/recurring" element={<ProtectedRoute><RecurringPage /></ProtectedRoute>} />
           <Route path="/view" element={<ProtectedRoute><TransactionsQueryPage /></ProtectedRoute>} />
           <Route path="/flow/:direction" element={<ProtectedRoute><FlowDashboardPage /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />

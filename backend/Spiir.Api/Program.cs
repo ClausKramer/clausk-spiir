@@ -6,8 +6,11 @@ using Spiir.Api.Data;
 using Spiir.Api.Data.Repositories;
 using Spiir.Api.Features.Accounts;
 using Spiir.Api.Features.Auth;
+using Spiir.Api.Features.Budgets;
 using Spiir.Api.Features.Categories;
 using Spiir.Api.Features.Categorization;
+using Spiir.Api.Features.Month;
+using Spiir.Api.Features.Recurring;
 using Spiir.Api.Features.Sync;
 using Spiir.Api.Features.NetWorth;
 using Spiir.Api.Features.Tags;
@@ -47,7 +50,8 @@ builder.Services.AddScoped<ICurrentUser, CurrentUserService>();
 builder.Services.AddScoped<IPasswordlessAuthenticator, PasswordlessAuthenticator>();
 builder.Services.AddScoped<DefaultDataSeeder>();
 builder.Services.AddScoped<NetWorthRepository>();
-builder.Services.AddScoped<NetWorthSeedImporter>();
+builder.Services.AddScoped<BudgetRepository>();
+builder.Services.AddScoped<RecurringDismissalRepository>();
 
 // Real email delivery via Resend when configured, falling back to console-only logging (dev, or
 // before Resend:ApiKey is set) — same "not-configured" placeholder convention as the other
@@ -160,22 +164,27 @@ await using (var seedScope = app.Services.CreateAsyncScope())
     }
 }
 
-// TEMPORARY: imports a bundled net worth history on first startup, for the one-off migration
-// out of a spreadsheet. Idempotent, and a no-op once the accounts exist. Remove this together
-// with Data/NetWorthSeed.json and NetWorthSeedImporter.cs once the data has landed.
-await using (var importScope = app.Services.CreateAsyncScope())
+// Planned payments imported before pending entries were skipped are still in the database, and a
+// sync is the only other thing that would clean them up — so an existing account would keep
+// double-counting them until its owner next syncs. Idempotent: it only ever touches a copy that
+// has a settled twin, so once clean it finds nothing. Counts only are logged, never the rows.
+await using (var cleanupScope = app.Services.CreateAsyncScope())
 {
-    var importLogger = importScope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("NetWorthSeed");
+    var cleanupLogger = cleanupScope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Cleanup");
     try
     {
-        await importScope.ServiceProvider
-            .GetRequiredService<NetWorthSeedImporter>()
-            .ImportAsync("claus@simplitize.dk");
+        var transactions = cleanupScope.ServiceProvider.GetRequiredService<TransactionRepository>();
+        var excluded = 0;
+        var userIds = await cleanupScope.ServiceProvider.GetRequiredService<UserRepository>().GetAllIdsAsync();
+        foreach (var userId in userIds)
+            excluded += await transactions.ExcludeSupersededPlannedCopiesAsync(userId);
+        cleanupLogger.LogInformation(
+            "Excluded {Count} planned entries superseded by their settled copy across {Users} user(s).",
+            excluded, userIds.Count);
     }
     catch (Exception ex)
     {
-        // Never fatal: a failed one-off import is worth a log line, not an API that won't boot.
-        importLogger.LogError(ex, "Could not import the bundled net worth history.");
+        cleanupLogger.LogError(ex, "Could not exclude superseded planned entries at startup.");
     }
 }
 
@@ -197,6 +206,9 @@ app.MapAccountEndpoints();
 app.MapSyncEndpoints();
 app.MapTagEndpoints();
 app.MapNetWorthEndpoints();
+app.MapBudgetEndpoints();
+app.MapMonthEndpoints();
+app.MapRecurringEndpoints();
 
 // Dev-only: retrieve last pending magic link URL (avoids needing real email in dev)
 if (app.Environment.IsDevelopment())

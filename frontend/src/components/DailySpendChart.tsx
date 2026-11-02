@@ -56,9 +56,10 @@ export function DailySpendChart({ daily, daysInMonth, elapsedDays, onSelectDay }
 
   const rateSoFar = elapsed > 0 ? cumulative / elapsed : 0
   const isPartial = elapsed > 0 && elapsed < daysInMonth
-  // Projection: the rest of the month spending at the rate established so far. Drawn flat,
-  // because that is the assumption — it is what "at this rate" means, not a forecast.
-  const projectedTotal = isPartial ? rateSoFar * daysInMonth : cumulative
+  // No "at this rate" projection. Extrapolating the average forward turns one large bill on the
+  // 1st into a forecast of ten times a month's spending — it reported 247.320 kr. for a month
+  // that was 24.000 kr. three days in. The month outlook estimates the end properly, from the
+  // bills still due and the usual pace of everyday spending.
 
   const maxBar = Math.max(...daily.map((d) => d.amount), 0)
   const maxV = Math.max(maxBar, ...runningAvg.map((p) => p.value), 0)
@@ -72,10 +73,6 @@ export function DailySpendChart({ daily, daysInMonth, elapsedDays, onSelectDay }
   const zeroY = y(0)
 
   const avgPoints = runningAvg.map((p) => `${bandX(p.day) + band / 2},${y(p.value)}`).join(' ')
-  const projPoints =
-    isPartial && elapsed > 0
-      ? `${bandX(elapsed) + band / 2},${y(rateSoFar)} ${bandX(daysInMonth) + band / 2},${y(rateSoFar)}`
-      : null
 
   const active = hover !== null ? daily.find((d) => d.day === hover) : null
   const activeAvg = hover !== null ? runningAvg.find((p) => p.day === hover) : null
@@ -121,17 +118,6 @@ export function DailySpendChart({ daily, daysInMonth, elapsedDays, onSelectDay }
 
         {/* Running average, over the bars */}
         <polyline points={avgPoints} fill="none" stroke={NET} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
-        {projPoints && (
-          <polyline
-            points={projPoints}
-            fill="none"
-            stroke={NET}
-            strokeWidth={2}
-            strokeDasharray="4 4"
-            strokeLinecap="round"
-            opacity={0.75}
-          />
-        )}
         {elapsed > 0 && (
           <circle cx={bandX(elapsed) + band / 2} cy={y(rateSoFar)} r={4} fill={NET} stroke={SURFACE} strokeWidth={2} />
         )}
@@ -223,26 +209,15 @@ export function DailySpendChart({ daily, daysInMonth, elapsedDays, onSelectDay }
           </svg>
           Average per day so far
         </span>
-        {isPartial && (
-          <span className="flex items-center gap-1.5">
-            <svg width="16" height="4" aria-hidden>
-              <line x1="0" y1="2" x2="16" y2="2" stroke={NET} strokeWidth="2" strokeDasharray="4 3" opacity="0.75" />
-            </svg>
-            At this rate
-          </span>
-        )}
       </div>
 
-      {/* The money answer the projection implies. "At this rate" is an assumption, not a
-          forecast, so it says so rather than presenting a number as inevitable. */}
       <p className="mt-2 text-center text-[0.72rem] text-slate-500">
         {elapsed === 0 ? (
           'This month hasn’t started yet.'
         ) : isPartial ? (
           <>
             <span className="text-slate-300">{kr(cumulative)} kr.</span> spent over {elapsed} day
-            {elapsed === 1 ? '' : 's'} — <span className="text-slate-300">{kr(rateSoFar)} kr./day</span>. At this
-            rate the month finishes near <span className="font-semibold text-slate-200">{kr(projectedTotal)} kr.</span>
+            {elapsed === 1 ? '' : 's'} — <span className="text-slate-300">{kr(rateSoFar)} kr./day</span>.
           </>
         ) : (
           <>

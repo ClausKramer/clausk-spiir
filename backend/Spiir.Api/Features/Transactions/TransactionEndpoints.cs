@@ -268,6 +268,7 @@ public static class TransactionEndpoints
         TransactionRepository transactions,
         CategoryRepository categories,
         TagRepository tags,
+        RecurringDismissalRepository dismissals,
         ICurrentUser currentUser,
         Guid[]? accountIds = null,
         int? year = null,
@@ -285,6 +286,10 @@ public static class TransactionEndpoints
         string? direction = null,
         // A single day of the month, for the daily burn chart's bars.
         int? day = null,
+        // "only" keeps rows from a detected recurring bill, "excluded" keeps everything else. The
+        // month view splits spending into bills and everyday spending, and each half has to open
+        // the rows it was counted from.
+        string? recurring = null,
         CancellationToken ct = default)
     {
         var userId = currentUser.GetRequiredUserId();
@@ -298,8 +303,11 @@ public static class TransactionEndpoints
         {
             // Net balance is not period-scoped: it's everything that has actually moved, up to
             // today. Scoping it to the selected period would describe a different number.
+            // Duplicates are left out because the figure itself leaves them out (GetNetBalanceAsync
+            // filters IsDuplicate in SQL). Without this the drill-down listed rows the number had
+            // excluded, and the two disagreed by the sum of whatever had been marked.
             rows = (await transactions.GetForPeriodAsync(userId, accountIds, new DateOnly(1900, 1, 1), Today.AddDays(1), ct))
-                .Where(t => !IsFuture(t))
+                .Where(t => !IsFuture(t) && !t.IsDuplicate)
                 .ToList();
         }
         else
@@ -348,6 +356,19 @@ public static class TransactionEndpoints
 
         if (day is not null)
             rows = rows.Where(t => t.BookingDate.Day == day).ToList();
+
+        if (recurring is "only" or "excluded")
+        {
+            // Detected over the same window the month outlook uses (up to the end of the period,
+            // or today if that is later), so a figure and its rows are split by the same set.
+            var windowEnd = to < Today.AddDays(1) ? to : Today.AddDays(1);
+            var (_, billKeys) = await Recurring.RecurringEndpoints.LoadRecurringAsync(
+                transactions, dismissals, userId, accountIds, windowEnd, ct);
+            var wantBills = recurring == "only";
+            rows = rows
+                .Where(t => billKeys.Contains(MerchantNormalizer.MerchantKey(t.Description)) == wantBills)
+                .ToList();
+        }
 
         if (direction is not null)
         {
@@ -713,7 +734,7 @@ public static class TransactionEndpoints
 
     // Leaf totals folded into their top-level group. A leaf without a parent is already top-level
     // and stands as its own group, so a category the tree doesn't name still appears.
-    private static List<MonthlySummaryRow> RollUpToGroups(
+    internal static List<MonthlySummaryRow> RollUpToGroups(
         IReadOnlyList<MonthlySummaryRow> leaves, IReadOnlyList<Category> allCategories)
     {
         var byId = allCategories.ToDictionary(c => c.Id);
@@ -789,15 +810,22 @@ public static class TransactionEndpoints
     private static List<TransactionListItem> ExcludingInternalTransfers(IReadOnlyList<TransactionListItem> items) =>
         items.Where(t => !IsTransfer(t, InternalTransferDetector.FindPairedIds(items))).ToList();
 
-    // A transfer is either one the user marked by hand — which always wins, since they can see a
-    // counterpart the data doesn't contain — or one the matcher paired off.
-    private static bool IsTransfer(TransactionListItem t, HashSet<Guid> pairedIds) =>
-        t.IsManualTransfer || pairedIds.Contains(t.Id);
+    // A transfer is one the user marked by hand — which always wins, since they can see a
+    // counterpart the data doesn't contain — or one the matcher paired off, or one filed under a
+    // Transfer-kind category.
+    //
+    // The category case covers what pairing can't: a transfer to an account that isn't connected
+    // has no opposite leg in the data, so it never pairs, and a leg still in transit pairs only
+    // once its counterpart arrives. Filing it under "Intern overførsel" — by the default rule or by
+    // hand — is a statement that it is not spending, and the totals should believe it. Everything
+    // routes through here, so the dashboard, budgets and every drill-down agree.
+    internal static bool IsTransfer(TransactionListItem t, HashSet<Guid> pairedIds) =>
+        t.IsManualTransfer || t.CategoryKind == CategoryKind.Transfer || pairedIds.Contains(t.Id);
 
     // Pairing needs to see beyond the period being aggregated: a transfer sent on the 31st and
     // received on the 1st has one leg outside any single month, and would otherwise never pair
     // no matter which month you looked at.
-    private static async Task<(List<TransactionListItem> InPeriod, HashSet<Guid> PairedIds)> LoadWithPairingAsync(
+    internal static async Task<(List<TransactionListItem> InPeriod, HashSet<Guid> PairedIds)> LoadWithPairingAsync(
         TransactionRepository transactions,
         Guid userId,
         Guid[]? accountIds,
@@ -821,7 +849,7 @@ public static class TransactionEndpoints
     // Net per category: a refund carrying a category cancels out part of that category's spend,
     // so both directions count. Income categories therefore come out negative and are dropped by
     // the caller, which only draws positive bars — they aren't spending and don't belong here.
-    private static List<MonthlySummaryRow> CategoryBreakdown(IReadOnlyList<TransactionListItem> items) =>
+    internal static List<MonthlySummaryRow> CategoryBreakdown(IReadOnlyList<TransactionListItem> items) =>
         items
             .GroupBy(t => (t.CategoryId, t.CategoryName, t.CategoryEmoji))
             .Select(g => new MonthlySummaryRow(g.Key.CategoryId, g.Key.CategoryName, g.Key.CategoryEmoji, g.Sum(t => -t.Amount)))

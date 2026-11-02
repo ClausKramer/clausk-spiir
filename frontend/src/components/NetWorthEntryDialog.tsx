@@ -20,8 +20,15 @@ const kr = (n: number) => Math.round(n).toLocaleString('da-DK')
 // pension moves a few per cent — so starting from the previous value turns the task from
 // "look up seven figures" into "correct the two that changed", which is the difference between
 // a habit that survives and one that doesn't.
-export function NetWorthEntryDialog({ year, month, onClose, onSaved }: Props) {
+export function NetWorthEntryDialog({ year: initialYear, month: initialMonth, onClose, onSaved }: Props) {
   const qc = useQueryClient()
+
+  // The month being edited. The props only say where to start: a correction to an older figure
+  // is as common as the monthly entry, and a dialog that could only ever open on the month
+  // currently due made every past figure uneditable.
+  const [cursor, setCursor] = useState({ year: initialYear, month: initialMonth })
+  const { year, month } = cursor
+
   const { data, isLoading } = useQuery({
     queryKey: ['networth-entry', year, month],
     queryFn: () => getNetWorthEntry(year, month),
@@ -64,6 +71,15 @@ export function NetWorthEntryDialog({ year, month, onClose, onSaved }: Props) {
       onClose()
     },
   })
+
+  // Typed values belong to one month. Carried across a change of month they would be saved
+  // against the wrong one, so they are dropped — after asking, since that is a loss.
+  function moveMonth(delta: number) {
+    if (Object.keys(edits).length > 0 && !window.confirm('Discard what you have typed for this month?')) return
+    setEdits({})
+    const d = new Date(year, month - 1 + delta, 1)
+    setCursor({ year: d.getFullYear(), month: d.getMonth() + 1 })
+  }
 
   const items = data?.items ?? []
   const assets = items.filter((i) => !i.isLiability)
@@ -141,9 +157,31 @@ export function NetWorthEntryDialog({ year, month, onClose, onSaved }: Props) {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="border-b border-[#232b3b] px-6 py-4">
-          <h2 className="text-base font-semibold text-slate-100">
-            What was everything worth in {MONTH_NAMES[month - 1]} {year}?
-          </h2>
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-base font-semibold text-slate-100">
+              What was everything worth in {MONTH_NAMES[month - 1]} {year}?
+            </h2>
+            <div className="flex shrink-0 items-center gap-1">
+              <button
+                type="button"
+                onClick={() => moveMonth(-1)}
+                disabled={isPending}
+                className="rounded border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:bg-[#232b3b] disabled:opacity-50"
+                aria-label="Previous month"
+              >
+                ←
+              </button>
+              <button
+                type="button"
+                onClick={() => moveMonth(1)}
+                disabled={isPending}
+                className="rounded border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:bg-[#232b3b] disabled:opacity-50"
+                aria-label="Next month"
+              >
+                →
+              </button>
+            </div>
+          </div>
           <p className="mt-1 text-sm text-slate-500">
             Enter each balance as it stands: what you owe as a negative number, what you hold as a
             positive one. Leave a box empty to record nothing for that account this month.

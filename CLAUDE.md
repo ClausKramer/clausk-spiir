@@ -215,7 +215,9 @@ node scripts/verify-drilldowns.mjs --year <year>   # needs the API running local
 ```
 
 It asserts every dashboard figure equals the total of its own drill-down, and fails the process
-on any mismatch. Add a check there for any new calculated value.
+on any mismatch. Add a check there for any new calculated value. The month view
+(`/month/outlook`) has its own script, `scripts/verify-month.mjs`, which also recomputes the
+typical-month baseline independently; run both after touching either.
 
 ### URL state
 

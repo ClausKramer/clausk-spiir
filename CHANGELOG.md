@@ -7,6 +7,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
+- **Spending inflated by planned payments and uncounted transfers.**
+  - Banks list a scheduled payment days before it happens and later re-issue it as a booked entry
+    under a different id. Skipping pending entries at import (earlier fix) only stopped new ones;
+    the copies already stored still double-counted. `ExcludeSupersededPlannedCopiesAsync` flags a
+    copy that was imported *before its own booking date* when a later sync brought a settled copy
+    of the same account/date/amount. That signature can't match two genuine identical charges
+    (nothing real is imported before it happens), so unlike the review-only duplicates dialog it is
+    applied automatically — after every sync, and once at startup for existing data. The
+    comparison is made in Danish time because `CreatedAt` is UTC and `BookingDate` is local.
+  - A transaction filed under a Transfer-kind category ("Intern overførsel", by the default rule or
+    by hand) now counts as a transfer. Previously only a hand mark or an opposite-leg pairing
+    removed a row from spending, so a transfer to an account that isn't connected — which can
+    never pair — stayed in. Routed through `TransactionEndpoints.IsTransfer`, so the dashboard,
+    budgets, recurring and every drill-down agree.
+  - The net-balance drill-down listed rows flagged as duplicates while the figure excluded them, so
+    the two disagreed by the sum of whatever was marked.
+  - Transfer pairing is not stored; it is recomputed on every request, so a leg that arrives days
+    late pairs as soon as it syncs. The window is `InternalTransferDetector.MaxSettlementDays`.
+- **Signed out on every visit.** Several things treated a server hiccup as "you are signed out":
+  `ProtectedRoute` redirected to login on any `/me` failure, and the axios interceptor deleted the
+  stored token whenever `/auth/refresh` failed for any reason. Now only a 401 means signed out;
+  other failures keep the session and show a retry. On the server, `GetValidWithUserByHashAsync`
+  (refresh *and* magic-link) used `rows.FirstOrDefault()` on non-nullable tuples, which yields
+  `(null, null)` — a *non-null* nullable tuple — so the `?? throw` never fired and every invalid
+  or revoked token returned a 500 instead of a 401/400. Refresh now issues the new token before
+  revoking the old one (a failure between the two used to leave no valid token), and a rejected
+  refresh no longer clears the cookie (two tabs refreshing at once would delete the winner's
+  fresh cookie). `/auth/refresh` also logs whether the request carried a cookie, with the
+  User-Agent, since the frontend and API are on different sites and a browser that blocks
+  third-party cookies never sends it.
+- **First request after idle failed, and startup crash-looped, while the serverless database woke
+  up.** Azure SQL refuses logins straight away ("Database ... is not currently available", error
+  40613) while it resumes from a pause, so raising the connect timeout (`Connect Timeout=60` in
+  `infra/modules/sql.bicep`) did not help — the login is rejected, not slow. `SqlConnectionFactory`
+  now retries opening with exponential backoff (6 tries, up to 15s apart) on Azure SQL's transient
+  errors, which covers both requests and the startup migration. Note the connection-string
+  timeout lives in the Key Vault secret `sql-connection-string`, not just the Bicep output.
 - **Login on the deployed app was completely broken.** `IEmailSender` was always `DevConsoleSender`
   regardless of environment, and the one way to retrieve a magic link outside of container logs
   (`GET /dev/last-magic-link`) is gated behind `IsDevelopment()` — so in Production, a magic link
@@ -22,6 +59,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   immediately when the failing request is the refresh call itself.
 
 ### Added
+- **Net worth figures can be edited where they are shown.** Previously the only way to change a
+  figure was "Record values", which only opened the month currently due — so a past month could
+  never be corrected, and the per-account numbers in the table were read-only. Now the table's
+  latest-month figures are click-to-edit (Enter or leaving the box saves, Escape abandons; an empty
+  or unreadable entry leaves the figure alone, since clearing a month is deliberate and lives in
+  the monthly form), clicking a month in the chart opens that month, and the monthly form has
+  month arrows so any month can be corrected. Moving months with typed-but-unsaved values asks
+  first and never carries them to another month. Inline edits send only the one value; the entry
+  endpoint touches only the accounts it is given, and `verify-networth.mjs` now checks that.
+- **A month view that says how the month is going.** The dashboard now lays out differently for a
+  month and for a year (same page and URL — a `month` in the period selects it). A year keeps the
+  averages and cash-flow shape; a month, where those are meaningless, gets `/month/outlook`:
+  spend so far against the same point in each of the previous twelve months, bills still to come
+  (from the recurring detector), everyday spending against its usual pace, income so far against a
+  typical month, and an estimated month end = spent + bills due + usual everyday spending for the
+  days left. The old "at this rate" projection is gone from the daily chart — it extrapolated one
+  large bill on the 1st into a forecast of ten times a month's spending (247.320 kr. for a month
+  that was 24.000 kr. three days in). Bills and everyday spending each open their rows through a
+  new `recurring=only|excluded` filter on `/transactions/query`; all three callers detect bills
+  through `RecurringEndpoints.LoadRecurringAsync`. Verified by `scripts/verify-month.mjs`, which
+  recomputes the typical-month baseline from twelve single-month dashboards rather than trusting
+  it. The recurring detector's next-expected date now follows calendar months, not "+30 days".
+  "Typical" is the **median** month, not the mean: a mean is dragged by a single one-off (a
+  property purchase or large transfer in one of the twelve months moved it by ~100k and spoiled
+  the month-end estimate built on it), and a one-off is not typical by definition. The mean is
+  still returned (`averageMonthSpend`), and a "What a typical month is made of" panel lists the
+  twelve months (each opens its transactions) and splits the average by kind, so a figure that
+  looks wrong can be checked rather than argued with.
 - Azure deployment infrastructure (`infra/*.bicep`, `azure.yaml`) for `azd up`: Container Apps
   (API), Static Web Apps (frontend), Azure SQL Database (serverless, Entra-only auth), Key Vault,
   Container Registry, Log Analytics + Application Insights. Resource group `rg-<env>` in

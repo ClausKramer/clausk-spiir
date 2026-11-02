@@ -109,6 +109,22 @@ post('/networth/entry', { year: target.year, month: target.month, values: [{ acc
 after = get(`/networth/dashboard?year=${YEAR}`)
 check('restoring returns the original total', near(after.series.at(-1).net, target.net))
 
+console.log('Correcting a single figure')
+// The inline editor on the page sends one account's value and nothing else, so saving one has to
+// leave every other account in that month exactly as it was.
+if (dash.byAccount.length > 1) {
+  const [one, other] = dash.byAccount
+  post('/networth/entry', { year: target.year, month: target.month, values: [{ accountId: one.accountId, value: one.value + 1 }] })
+  const afterOne = get(`/networth/dashboard?year=${YEAR}`)
+  check('the figure sent is the one that changed', near(afterOne.byAccount.find((x) => x.accountId === one.accountId).value, one.value + 1))
+  check('the other accounts are left alone', near(afterOne.byAccount.find((x) => x.accountId === other.accountId).value, other.value))
+  check('no extra month appears', afterOne.series.length === dash.series.length)
+  post('/networth/entry', { year: target.year, month: target.month, values: [{ accountId: one.accountId, value: one.value }] })
+  check('putting it back restores the total', near(get(`/networth/dashboard?year=${YEAR}`).series.at(-1).net, target.net))
+} else {
+  console.log('  (only one account — nothing to leave alone)')
+}
+
 console.log('Entry form')
 const form = get(`/networth/entry?year=${target.year}&month=${target.month}`)
 check('the recorded month comes back with its values', form.items.some((i) => i.value !== null))

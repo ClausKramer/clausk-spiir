@@ -32,6 +32,7 @@ export function TransactionsQueryPage() {
     kind: search.get('kind') ?? undefined,
     direction: (search.get('direction') as TransactionQuery['direction']) ?? undefined,
     day: search.get('day') ? Number(search.get('day')) : undefined,
+    recurring: (search.get('recurring') as TransactionQuery['recurring']) ?? undefined,
   }
 
   const { data: accounts = [] } = useQuery({ queryKey: ['accounts'], queryFn: getBankAccounts })

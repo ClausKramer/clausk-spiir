@@ -110,12 +110,20 @@ public static class SyncEndpoints
             }
         }
 
+        // Run after every sync, not once: the settled twin of a planned payment can arrive in any
+        // later sync, and only then does the planned copy become identifiable as superseded.
+        var excludedPlanned = await transactions.ExcludeSupersededPlannedCopiesAsync(userId, ct);
+        if (excludedPlanned > 0)
+            logger.LogInformation("Excluded {Count} planned entries superseded by their settled copy.", excludedPlanned);
+
         return TypedResults.Ok(new
         {
             synced,
             skipped,
             newTransactions = totalNew,
-            message = $"Synced {synced} account(s), added {totalNew} transaction(s).",
+            excludedPlanned,
+            message = $"Synced {synced} account(s), added {totalNew} transaction(s)."
+                      + (excludedPlanned > 0 ? $" Excluded {excludedPlanned} planned payment(s) now settled." : ""),
         });
     }
 }

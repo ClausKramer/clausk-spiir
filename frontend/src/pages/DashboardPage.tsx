@@ -16,6 +16,8 @@ import { CategoryPicker } from '../components/CategoryPicker'
 import { TagEditor } from '../components/TagEditor'
 import { CashFlowChart } from '../components/CashFlowChart'
 import { DailySpendChart } from '../components/DailySpendChart'
+import { MonthPaceChart } from '../components/MonthPaceChart'
+import { getMonthOutlook } from '../api/month'
 import { PeriodNavigator } from '../components/PeriodNavigator'
 import { periodLabel, MONTH_NAMES, readPeriod, writePeriod, currentMonth } from '../lib/period'
 import { drillTo, type Measure } from '../lib/drill'
@@ -100,6 +102,17 @@ export function DashboardPage() {
     enabled: !noneSelected,
     // Keeps the previous period's numbers on screen while the next load runs, so switching
     // month doesn't blank the whole dashboard.
+    placeholderData: (prev) => prev,
+  })
+
+  // A month and a year answer different questions. A year is for trends — averages, the shape of
+  // each month — which mean nothing over a single month; a month is for "how is this going", which
+  // needs a baseline, the bills still to come and an honest estimate of where it ends.
+  const isMonth = period.month !== null
+  const { data: outlook, isLoading: outlookLoading } = useQuery({
+    queryKey: ['month-outlook', accountIdsParam, period],
+    queryFn: () => getMonthOutlook(accountIdsParam, period),
+    enabled: !noneSelected && isMonth,
     placeholderData: (prev) => prev,
   })
 
@@ -232,6 +245,18 @@ export function DashboardPage() {
             {/* Sync, recategorize, duplicate-finding and rule clearing all live on the Accounts
                 page: they change the underlying data, whereas this page only reads it. */}
             <Link
+              to="/budgets"
+              className="rounded-lg border border-slate-700 bg-[#1a1f2e] px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-[#232b3b] transition-colors"
+            >
+              Budgets
+            </Link>
+            <Link
+              to="/recurring"
+              className="rounded-lg border border-slate-700 bg-[#1a1f2e] px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-[#232b3b] transition-colors"
+            >
+              Recurring
+            </Link>
+            <Link
               to="/networth"
               className="rounded-lg border border-slate-700 bg-[#1a1f2e] px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-[#232b3b] transition-colors"
             >
@@ -334,7 +359,10 @@ export function DashboardPage() {
           </div>
         ) : (
           <>
-            {/* KPI cards */}
+            {/* A year: averages and the shape of each month. Per-month averages are meaningless
+                over a single month, where "average" is just that month, so a month gets its own
+                tiles below instead. */}
+            {!isMonth && (
             <div className="mb-5 grid grid-cols-2 md:grid-cols-4 gap-3">
               <Kpi
                 label="Avg. monthly income"
@@ -366,6 +394,263 @@ export function DashboardPage() {
                 to={drill('Net balance', { scope: 'balance' }, 'net')}
               />
             </div>
+            )}
+
+            {/* A month: where it stands against a typical one, what is still to come, and where
+                it is likely to end. */}
+            {isMonth && (
+              <>
+                {outlookLoading || !outlook ? (
+                  <Section title={`🧭 ${label}`}>
+                    <Spinner />
+                  </Section>
+                ) : (
+                  <>
+                    <div className="mb-5 grid grid-cols-2 md:grid-cols-3 gap-3">
+                      <Kpi
+                        label={outlook.isFinished ? 'Spent' : 'Spent so far'}
+                        value={dkk(outlook.spentSoFar)}
+                        valueClass="text-red-400"
+                        sub={
+                          outlook.typical && outlook.isCurrent
+                            ? `Typical by day ${outlook.elapsedDays}: ${dkk(outlook.typical.spendByNow)}`
+                            : undefined
+                        }
+                        to={drill('All spending', { direction: 'expense' }, 'outflow')}
+                      />
+                      {outlook.isCurrent && (
+                        <Kpi
+                          label="Expected month end"
+                          value={outlook.expectedMonthEnd === null ? '—' : dkk(outlook.expectedMonthEnd)}
+                          valueClass="text-slate-100"
+                          sub={
+                            outlook.typical
+                              ? `Typical month: ${dkk(outlook.typical.monthSpend)}`
+                              : 'Not enough history to estimate'
+                          }
+                        />
+                      )}
+                      <Kpi
+                        label="Everyday spending"
+                        value={dkk(outlook.everydaySoFar)}
+                        valueClass="text-red-400"
+                        sub={(() => {
+                          if (!outlook.typical || !outlook.isCurrent) return 'Everything except bills'
+                          const diff = outlook.everydaySoFar - outlook.typical.everydayByNow
+                          if (Math.abs(diff) < 0.5) return 'In line with the usual pace'
+                          return diff > 0
+                            ? `${dkk(diff)} above the usual pace`
+                            : `${dkk(-diff)} below the usual pace`
+                        })()}
+                        to={drill('Everyday spending', { direction: 'expense', recurring: 'excluded' }, 'outflow')}
+                      />
+                      {outlook.isCurrent ? (
+                        <Kpi
+                          label="Bills still to come"
+                          value={dkk(outlook.stillToCome.total)}
+                          valueClass="text-slate-100"
+                          sub={`${outlook.stillToCome.items.length} expected · ${dkk(outlook.billsPaid)} paid so far`}
+                        />
+                      ) : (
+                        <Kpi
+                          label="Bills paid"
+                          value={dkk(outlook.billsPaid)}
+                          valueClass="text-slate-100"
+                          to={drill('Bills', { direction: 'expense', recurring: 'only' }, 'outflow')}
+                        />
+                      )}
+                      <Kpi
+                        label={outlook.isFinished ? 'Income' : 'Income so far'}
+                        value={dkk(outlook.incomeSoFar)}
+                        valueClass="text-emerald-400"
+                        sub={outlook.typical ? `Typical month: ${dkk(outlook.typical.income)}` : undefined}
+                        to={drill('All income', { direction: 'income' }, 'inflow')}
+                      />
+                      {outlook.typical && (
+                        <Kpi
+                          label="Typical month"
+                          value={dkk(outlook.typical.monthSpend)}
+                          valueClass="text-slate-300"
+                          sub={`Middle of the last ${outlook.baselineMonths} month${outlook.baselineMonths === 1 ? '' : 's'}`}
+                        />
+                      )}
+                    </div>
+
+                    {!outlook.hasBaseline && (
+                      <p className="mb-5 text-xs text-slate-600">
+                        There is no earlier month to compare this one with yet, so nothing here can be called
+                        high or low.
+                      </p>
+                    )}
+
+                    {(outlook.elapsedDays > 0 || outlook.typical) && (
+                      <Section title={`📈 Pace — ${label}`}>
+                        <MonthPaceChart
+                          cumulative={outlook.cumulative}
+                          typical={outlook.typical?.cumulative ?? null}
+                          daysInMonth={outlook.daysInMonth}
+                          expectedEnd={outlook.expectedMonthEnd}
+                        />
+                        {outlook.typical && outlook.isCurrent && (
+                          <p className="mt-2 text-center text-[0.72rem] text-slate-500">
+                            Compared with the same point in each of the last {outlook.baselineMonths} month
+                            {outlook.baselineMonths === 1 ? '' : 's'}, so a bill that always falls early in the
+                            month doesn’t count against this one.
+                          </p>
+                        )}
+                      </Section>
+                    )}
+
+                    {/* The typical month is an average, and an average can be wrong in two quiet
+                        ways: one enormous month drags it up, or every month is high because
+                        savings and loan repayments count. Showing the months and what they are
+                        made of lets either be seen rather than taken on trust. */}
+                    {outlook.typical && (
+                      <Section title="🔍 What a typical month is made of">
+                        {(() => {
+                          const typical = outlook.typical!
+                          const maxSpend = Math.max(...typical.months.map((m) => m.spend), 1)
+                          const highest = typical.months.reduce((a, b) => (b.spend > a.spend ? b : a))
+                          const kindRows = [
+                            ...KIND_SLOTS.map((s) => ({
+                              key: s.key as string,
+                              label: s.label as string,
+                              color: s.color as string,
+                              value: typical.byKind[s.key],
+                            })),
+                            { key: 'other', label: 'Other', color: KIND_NONE, value: typical.byKind.other },
+                          ].filter((r) => r.value > 0)
+                          const maxKind = Math.max(...kindRows.map((r) => r.value), 1)
+
+                          return (
+                            <>
+                              <div className="flex h-24 items-end gap-1" role="list" aria-label="Spending in each of the months averaged">
+                                {typical.months.map((m) => (
+                                  <Link
+                                    key={`${m.year}-${m.month}`}
+                                    role="listitem"
+                                    to={drill(
+                                      `${MONTH_NAMES[m.month - 1]} ${m.year} spending`,
+                                      { direction: 'expense' },
+                                      'outflow',
+                                      { year: m.year, month: m.month },
+                                    )}
+                                    className="flex h-full flex-1 flex-col justify-end rounded-t hover:bg-white/[0.04]"
+                                    title={`${MONTH_NAMES[m.month - 1]} ${m.year}: ${dkk(m.spend)} — click to see the transactions`}
+                                  >
+                                    <div
+                                      className="w-full rounded-t bg-red-600"
+                                      style={{ height: `${(m.spend / maxSpend) * 100}%`, minHeight: m.spend > 0 ? 2 : 0 }}
+                                    />
+                                  </Link>
+                                ))}
+                              </div>
+                              <div className="mt-1 flex gap-1">
+                                {typical.months.map((m) => (
+                                  <div key={`l-${m.year}-${m.month}`} className="flex-1 text-center text-[0.6rem] text-slate-600">
+                                    {MONTH_NAMES[m.month - 1].slice(0, 1)}
+                                  </div>
+                                ))}
+                              </div>
+                              <p className="mt-2 text-[0.72rem] text-slate-500">
+                                Total spending in each of the last {typical.months.length} month
+                                {typical.months.length === 1 ? '' : 's'} — tap one to open it. Highest:{' '}
+                                <span className="text-slate-300">
+                                  {MONTH_NAMES[highest.month - 1]} {highest.year}, {dkk(highest.spend)}
+                                </span>
+                                .
+                              </p>
+
+                              <div className="mt-4 space-y-2">
+                                {kindRows.map((r) => (
+                                  <BarRow
+                                    key={r.key}
+                                    labelWidth="w-24"
+                                    label={r.label}
+                                    fraction={r.value / maxKind}
+                                    amount={dkk(r.value)}
+                                    color={r.color}
+                                  />
+                                ))}
+                              </div>
+                              <p className="mt-3 text-[0.68rem] text-slate-600">
+                                A typical month is the middle one of these, {dkk(typical.monthSpend)}, so a single
+                                large one-off doesn’t pull it up. The average is {dkk(typical.averageMonthSpend)},
+                                and the split above is of the average. Both count everything that leaves your
+                                accounts and isn’t a transfer — savings and loan repayments included — so they run
+                                higher than a figure for everyday living alone.
+                              </p>
+                            </>
+                          )
+                        })()}
+                      </Section>
+                    )}
+
+                    {outlook.isCurrent && (
+                      <Section
+                        title={`🗓️ Still to come — ${label}`}
+                        action={
+                          outlook.billsPaid > 0 ? (
+                            <Link
+                              to={drill('Bills paid so far', { direction: 'expense', recurring: 'only' }, 'outflow')}
+                              className="text-[0.7rem] text-sky-400 hover:underline"
+                            >
+                              {dkk(outlook.billsPaid)} of bills paid ›
+                            </Link>
+                          ) : undefined
+                        }
+                      >
+                        {outlook.stillToCome.items.length === 0 ? (
+                          <p className="py-4 text-center text-sm text-slate-600">
+                            No bills expected for the rest of the month.
+                          </p>
+                        ) : (
+                          <div className="space-y-1">
+                            {outlook.stillToCome.items.map((b, i) => (
+                              <div
+                                key={`${b.merchantKey}-${i}`}
+                                className="flex items-center gap-3 rounded px-2 py-2 hover:bg-white/[0.03]"
+                              >
+                                <span className="w-14 shrink-0 text-xs tabular-nums text-slate-500">
+                                  {(() => {
+                                    // Split rather than parsed as a Date, which reads "2026-10-06" as UTC
+                                    // midnight and can land on the previous day west of Greenwich.
+                                    const [, mo, da] = b.expectedDate.split('-').map(Number)
+                                    return `${da} ${MONTH_NAMES[mo - 1]}`
+                                  })()}
+                                </span>
+                                <span className="min-w-0 flex-1 truncate text-sm text-slate-300">
+                                  {b.categoryEmoji ? `${b.categoryEmoji} ` : ''}
+                                  {b.displayName}
+                                  {b.overdue && (
+                                    <span
+                                      className="ml-2 rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 align-middle text-[0.62rem] font-medium uppercase tracking-wide text-amber-400"
+                                      title="Expected by now but not seen yet — banks often post a day or two late"
+                                    >
+                                      Due
+                                    </span>
+                                  )}
+                                </span>
+                                <span className="shrink-0 text-sm font-semibold tabular-nums text-slate-200">
+                                  {dkk(b.amount)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        <p className="mt-3 text-[0.68rem] text-slate-600">
+                          Estimated from charges that repeat on a schedule.{' '}
+                          <Link to="/recurring" className="text-sky-400 hover:underline">
+                            Correct a wrong one on the Recurring page
+                          </Link>
+                          .
+                        </p>
+                      </Section>
+                    )}
+                  </>
+                )}
+              </>
+            )}
 
             {/* Daily burn — only over a single month, where "the 3rd" means one day. */}
             {period.month !== null && (dashboard?.dailySpending.length ?? 0) > 0 && (
@@ -385,7 +670,8 @@ export function DashboardPage() {
               </Section>
             )}
 
-            {/* Monthly flow */}
+            {/* Monthly flow — the shape of a year. Over one month it is a single bar. */}
+            {!isMonth && (
             <Section
               title={`📅 Monthly cash flow — ${label}`}
               action={
@@ -457,8 +743,9 @@ export function DashboardPage() {
                 </div>
               )}
             </Section>
+            )}
 
-            <div className="mb-5 grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className={isMonth ? 'mb-5' : 'mb-5 grid grid-cols-1 lg:grid-cols-2 gap-4'}>
               {/* Category breakdown */}
               <Section
                 title={`📊 Spending by category — ${label}`}
@@ -541,7 +828,8 @@ export function DashboardPage() {
                 )}
               </Section>
 
-              {/* Structural balance */}
+              {/* Structural balance — averages, so a year's question. */}
+              {!isMonth && (
               <Section title="💰 Structural monthly balance">
                 {dashboardLoading ? (
                   <Spinner />
@@ -571,6 +859,7 @@ export function DashboardPage() {
                   </div>
                 )}
               </Section>
+              )}
             </div>
 
             <div className="mb-5 grid grid-cols-1 lg:grid-cols-2 gap-4">

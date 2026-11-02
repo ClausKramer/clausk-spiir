@@ -15,7 +15,10 @@ public record TransactionListItem(
     string? CategoryEmoji,
     bool IsCategoryManual,
     bool IsManualTransfer,
-    bool IsDuplicate);
+    bool IsDuplicate,
+    // The kind of the category it is filed under, so "is this a transfer?" can be answered from
+    // the row itself. Null while uncategorised.
+    string? CategoryKind);
 
 // A set of transactions that look like the same real payment arriving more than once. Source
 // distinguishes how each copy got in, which is usually what tells you which one to keep.
@@ -73,7 +76,7 @@ public class TransactionRepository(IDbConnectionFactory connectionFactory)
         var rows = await conn.QueryAsync<TransactionListItem>(
             $"""
             SELECT t.Id, t.BankAccountId, t.BookingDate, t.Amount, t.Currency, t.Description,
-                   t.CategoryId, c.Name AS CategoryName, c.Emoji AS CategoryEmoji, t.IsCategoryManual, t.IsManualTransfer, t.IsDuplicate
+                   t.CategoryId, c.Name AS CategoryName, c.Emoji AS CategoryEmoji, t.IsCategoryManual, t.IsManualTransfer, t.IsDuplicate, c.Kind AS CategoryKind
             FROM Transactions t
             LEFT JOIN Categories c ON c.Id = t.CategoryId
             WHERE t.UserId = @userId AND t.BookingDate >= @from AND t.BookingDate < @to {filter}
@@ -105,7 +108,7 @@ public class TransactionRepository(IDbConnectionFactory connectionFactory)
         var items = await conn.QueryAsync<TransactionListItem>(
             $"""
             SELECT t.Id, t.BankAccountId, t.BookingDate, t.Amount, t.Currency, t.Description,
-                   t.CategoryId, c.Name AS CategoryName, c.Emoji AS CategoryEmoji, t.IsCategoryManual, t.IsManualTransfer, t.IsDuplicate
+                   t.CategoryId, c.Name AS CategoryName, c.Emoji AS CategoryEmoji, t.IsCategoryManual, t.IsManualTransfer, t.IsDuplicate, c.Kind AS CategoryKind
             FROM Transactions t
             LEFT JOIN Categories c ON c.Id = t.CategoryId
             WHERE t.UserId = @userId {filter} {periodFilter} {futureFilter} {duplicateFilter}
@@ -167,6 +170,51 @@ public class TransactionRepository(IDbConnectionFactory connectionFactory)
             new { userId, transactionIds, isDuplicate });
     }
 
+    // Excludes entries that were imported while still planned and have since been superseded by
+    // the settled version of the same payment.
+    //
+    // Banks list a scheduled payment (Betalingsservice, a card payment not yet settled) days
+    // before it happens and later re-issue it as a booked entry under a different id — so for a
+    // period both were imported, and one payment counted twice. Importing pending entries has
+    // since stopped, but the copies already stored stay, and a bank that reports no status at all
+    // can still send them.
+    //
+    // The signature is deliberately narrow: a copy was imported before its own booking date (it
+    // can't have been a settled charge yet — nothing real can be imported before it happens), and
+    // a later sync brought another copy of the same account, date and amount that was not itself
+    // still planned. Two genuine identical charges can't look like that, which is why this is
+    // safe to apply without asking, unlike the broader same-day candidates the duplicates dialog
+    // lists for review. The copy is flagged rather than deleted, so it is reversible.
+    //
+    // CreatedAt is UTC and BookingDate is the bank's local date, so the comparison is made in
+    // Danish time; near midnight a plain UTC date would misread a settled entry as planned.
+    public async Task<int> ExcludeSupersededPlannedCopiesAsync(Guid userId, CancellationToken ct = default)
+    {
+        using var conn = await connectionFactory.CreateOpenConnectionAsync(ct);
+        return await conn.ExecuteAsync(
+            """
+            UPDATE t SET IsDuplicate = 1
+            FROM Transactions t
+            WHERE t.UserId = @userId
+              AND t.IsDuplicate = 0
+              AND t.ExternalTransactionId NOT LIKE 'csv:%'
+              AND CAST(t.CreatedAt AT TIME ZONE 'UTC' AT TIME ZONE 'Central European Standard Time' AS date) < t.BookingDate
+              AND EXISTS (
+                  SELECT 1 FROM Transactions s
+                  WHERE s.UserId = t.UserId
+                    AND s.BankAccountId = t.BankAccountId
+                    AND s.BookingDate = t.BookingDate
+                    AND s.Amount = t.Amount
+                    AND s.Id <> t.Id
+                    AND s.IsDuplicate = 0
+                    AND s.ExternalTransactionId NOT LIKE 'csv:%'
+                    AND s.CreatedAt > t.CreatedAt
+                    AND CAST(s.CreatedAt AT TIME ZONE 'UTC' AT TIME ZONE 'Central European Standard Time' AS date) >= s.BookingDate
+              )
+            """,
+            new { userId });
+    }
+
     // Transactions that share an account, a date and an amount — the signature of the same payment
     // recorded twice. Description is deliberately not part of the key: the whole reason a duplicate
     // exists is usually that it arrived from two sources, which word it differently.
@@ -210,7 +258,7 @@ public class TransactionRepository(IDbConnectionFactory connectionFactory)
         var rows = await conn.QueryAsync<TransactionListItem>(
             """
             SELECT t.Id, t.BankAccountId, t.BookingDate, t.Amount, t.Currency, t.Description,
-                   t.CategoryId, c.Name AS CategoryName, c.Emoji AS CategoryEmoji, t.IsCategoryManual, t.IsManualTransfer, t.IsDuplicate
+                   t.CategoryId, c.Name AS CategoryName, c.Emoji AS CategoryEmoji, t.IsCategoryManual, t.IsManualTransfer, t.IsDuplicate, c.Kind AS CategoryKind
             FROM Transactions t
             LEFT JOIN Categories c ON c.Id = t.CategoryId
             CROSS JOIN (SELECT Amount, BookingDate, BankAccountId FROM Transactions
@@ -235,7 +283,7 @@ public class TransactionRepository(IDbConnectionFactory connectionFactory)
         var rows = await conn.QueryAsync<TransactionListItem>(
             """
             SELECT t.Id, t.BankAccountId, t.BookingDate, t.Amount, t.Currency, t.Description,
-                   t.CategoryId, c.Name AS CategoryName, c.Emoji AS CategoryEmoji, t.IsCategoryManual, t.IsManualTransfer, t.IsDuplicate
+                   t.CategoryId, c.Name AS CategoryName, c.Emoji AS CategoryEmoji, t.IsCategoryManual, t.IsManualTransfer, t.IsDuplicate, c.Kind AS CategoryKind
             FROM Transactions t
             LEFT JOIN Categories c ON c.Id = t.CategoryId
             WHERE t.UserId = @userId AND t.IsCategoryManual = 0

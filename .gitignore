@@ -439,6 +439,3 @@ FodyWeavers.xsd
 # Local reference material (real bank exports, design references) — not for the repo
 references/
 networth-import*.json
-
-# One-off net worth import payload — real financial data, rides in the container image only.
-backend/Spiir.Api/Data/NetWorthSeed.json

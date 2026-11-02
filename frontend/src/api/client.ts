@@ -19,9 +19,14 @@ client.interceptors.request.use((config) => {
   return config
 })
 
+// A 401 is the server saying "you are not signed in". Anything else — a 500, a timeout, no
+// network — is the server failing to answer, which says nothing about whether you are signed in.
+export const isUnauthorized = (err: unknown) => axios.isAxiosError(err) && err.response?.status === 401
+
 // On 401, try to refresh once
 let isRefreshing = false
-let refreshQueue: Array<(token: string | null) => void> = []
+type RefreshResult = { token: string } | { error: unknown }
+let refreshQueue: Array<(result: RefreshResult) => void> = []
 
 client.interceptors.response.use(
   (r) => r,
@@ -36,9 +41,9 @@ client.interceptors.response.use(
 
     if (isRefreshing) {
       return new Promise((resolve, reject) => {
-        refreshQueue.push((token) => {
-          if (!token) return reject(error)
-          original.headers.Authorization = `Bearer ${token}`
+        refreshQueue.push((result) => {
+          if ('error' in result) return reject(result.error)
+          original.headers.Authorization = `Bearer ${result.token}`
           resolve(client(original))
         })
       })
@@ -51,15 +56,20 @@ client.interceptors.response.use(
       const { data } = await client.post('/auth/refresh')
       const newToken = data.accessToken
       localStorage.setItem('access_token', newToken)
-      refreshQueue.forEach((cb) => cb(newToken))
+      refreshQueue.forEach((cb) => cb({ token: newToken }))
       refreshQueue = []
       original.headers.Authorization = `Bearer ${newToken}`
       return client(original)
-    } catch {
-      localStorage.removeItem('access_token')
-      refreshQueue.forEach((cb) => cb(null))
+    } catch (refreshError) {
+      // Only the refresh call itself being refused (401) means the session is over. If it merely
+      // failed — the database waking up, a dropped connection — the stored token and the refresh
+      // cookie are still good, and throwing the token away would sign you out for a server hiccup.
+      const signedOut = isUnauthorized(refreshError)
+      if (signedOut) localStorage.removeItem('access_token')
+      const failure = signedOut ? error : refreshError
+      refreshQueue.forEach((cb) => cb({ error: failure }))
       refreshQueue = []
-      return Promise.reject(error)
+      return Promise.reject(failure)
     } finally {
       isRefreshing = false
     }

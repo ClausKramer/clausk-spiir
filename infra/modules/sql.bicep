@@ -64,4 +64,9 @@ output serverName string = sqlServer.name
 output databaseName string = sqlDatabase.name
 output fullyQualifiedDomainName string = sqlServer.properties.fullyQualifiedDomainName
 // Entra-only, system-assigned managed identity — no credentials in this string.
-output connectionString string = 'Server=tcp:${sqlServer.properties.fullyQualifiedDomainName},1433;Database=${sqlDatabase.name};Authentication=Active Directory Managed Identity;Encrypt=True;TrustServerCertificate=False;'
+// Connect Timeout=60: the database is serverless and auto-pauses when idle, and its resume from
+// pause routinely takes longer than the client default of ~15s — every "Connection Timeout
+// Expired" in the logs during a cold start was this, not a real outage. 60s comfortably covers
+// Azure SQL's documented worst case without masking a genuinely unreachable server for a full
+// minute (it still fails fast once actually connected — this only widens the initial handshake).
+output connectionString string = 'Server=tcp:${sqlServer.properties.fullyQualifiedDomainName},1433;Database=${sqlDatabase.name};Authentication=Active Directory Managed Identity;Encrypt=True;TrustServerCertificate=False;Connect Timeout=60;'

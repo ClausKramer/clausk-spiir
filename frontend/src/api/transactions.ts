@@ -295,6 +295,9 @@ export interface TransactionQuery {
   direction?: FlowDirection
   // A single day of the selected month, for the daily burn chart's bars.
   day?: number
+  // Rows from a detected recurring bill ('only') or everything else ('excluded'). A string, not a
+  // boolean: drillTo drops `false`, which would silently turn "everyday" into "everything".
+  recurring?: 'only' | 'excluded'
 }
 
 export interface QueryResult {

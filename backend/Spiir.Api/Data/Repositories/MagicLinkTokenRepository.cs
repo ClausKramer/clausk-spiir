@@ -47,7 +47,9 @@ public class MagicLinkTokenRepository(IDbConnectionFactory connectionFactory)
             new { tokenHash, now },
             splitOn: "Id");
 
-        return rows.FirstOrDefault();
+        // See RefreshTokenRepository: FirstOrDefault on non-nullable tuples never yields null.
+        var list = rows.AsList();
+        return list.Count == 0 ? null : list[0];
     }
 
     public async Task MarkConsumedAsync(Guid id, DateTime consumedAt, CancellationToken ct = default)

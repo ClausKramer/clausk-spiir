@@ -88,21 +88,37 @@ public static class AuthEndpoints
         IPasswordlessAuthenticator auth,
         HttpContext ctx,
         IOptions<JwtOptions> jwtOptions,
+        ILoggerFactory loggerFactory,
         CancellationToken ct)
     {
+        var log = loggerFactory.CreateLogger("Auth");
+        var userAgent = ctx.Request.Headers.UserAgent.ToString();
+
+        // Logged because the frontend and this API are on different sites, so whether the refresh
+        // cookie comes back at all is up to the browser — Safari and some privacy settings drop
+        // third-party cookies outright. "Never sent" and "sent but rejected" are different
+        // problems with different fixes, and nothing else records which one a sign-in hit.
         var rawToken = ctx.Request.Cookies[CookieName];
         if (string.IsNullOrWhiteSpace(rawToken))
+        {
+            log.LogInformation("Refresh rejected: the request carried no refresh_token cookie. UserAgent={UserAgent}", userAgent);
             return TypedResults.Unauthorized();
+        }
 
         try
         {
             var result = await auth.RefreshAsync(rawToken, ct);
             SetRefreshCookie(ctx, result.RefreshToken, jwtOptions);
+            log.LogInformation("Refresh ok. UserAgent={UserAgent}", userAgent);
             return TypedResults.Ok(new { accessToken = result.AccessToken, user = result.User });
         }
         catch (InvalidOperationException)
         {
-            ClearRefreshCookie(ctx);
+            // The cookie is deliberately left alone. Two tabs refreshing at once present the same
+            // token; one wins and is handed a fresh cookie, and the other is rejected — if that
+            // rejection cleared the cookie it would delete the winner's, signing both out. A
+            // rejected token is harmless to keep: it just expires, or is replaced at next sign-in.
+            log.LogInformation("Refresh rejected: the refresh_token was unknown, revoked or expired. UserAgent={UserAgent}", userAgent);
             return TypedResults.Unauthorized();
         }
     }

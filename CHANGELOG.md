@@ -7,6 +7,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
+- **Asked to sign in on every visit, in Chrome.** Production logs showed every `/auth/refresh`
+  since logging was added arriving with no `refresh_token` cookie — on Android and Windows Chrome
+  alike, never once "Refresh ok". The site (`*.azurestaticapps.net`) and the API
+  (`*.azurecontainerapps.io`) are different sites, so the refresh cookie is a third-party cookie,
+  and Chrome silently refuses to store those when the setting is on (also the default in
+  Incognito). Reproduced locally — site on `localhost`, API on `127.0.0.1` with production cookie
+  settings, Chrome run with `--test-third-party-cookie-phaseout`: the server sent the cookie, Chrome
+  dropped it, and the next visit landed on the login page. The cookie is now also `Partitioned`
+  (CHIPS), which browsers keep storing while blocking third-party cookies; with it the same test
+  stays signed in across repeated visits, including through the cookie being replaced on each
+  refresh, and with third-party cookies allowed nothing changes. Logout sends matching attributes
+  so deleting still works. Production only: `Partitioned` requires `Secure`. A cookie is keyed to
+  the site it was set from, so the site must keep being opened from its one URL. The durable fix
+  would be serving site and API from one domain, which needs DNS.
 - **Spending inflated by planned payments and uncounted transfers.**
   - Banks list a scheduled payment days before it happens and later re-issue it as a booked entry
     under a different id. Skipping pending entries at import (earlier fix) only stopped new ones;

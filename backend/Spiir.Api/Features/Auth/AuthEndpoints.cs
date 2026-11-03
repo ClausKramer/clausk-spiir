@@ -154,16 +154,28 @@ public static class AuthEndpoints
     // works for this cross-site architecture. Locally, frontend and backend are same-origin
     // through Vite's dev proxy, and None+Secure would be dropped anyway since dev runs over plain
     // HTTP — Strict is both sufficient and correct there.
+    //
+    // SameSite=None alone is not enough: to the browser this is a third-party cookie, and Chrome
+    // (and others) let people block those — on by default in Incognito, and a common privacy
+    // setting. A blocked cookie is silently never stored, so the refresh call arrives without it
+    // and the person is asked to sign in every visit. `Partitioned` (CHIPS) opts the cookie into
+    // being stored separately for each top-level site, which browsers allow even while blocking
+    // third-party cookies, because it can't be used to follow someone across sites. Reproduced
+    // locally in Chrome with third-party cookies blocked: without it the session is lost on the
+    // next visit, with it the session survives.
     private static CookieOptions BaseCookieOptions(HttpContext ctx)
     {
         var isDev = ctx.RequestServices.GetRequiredService<IWebHostEnvironment>().IsDevelopment();
-        return new CookieOptions
+        var options = new CookieOptions
         {
             HttpOnly = true,
             Secure = !isDev,
             SameSite = isDev ? SameSiteMode.Strict : SameSiteMode.None,
             Path = "/auth",
         };
+        // Production only: Partitioned requires Secure, which plain-HTTP local development can't be.
+        if (!isDev) options.Extensions.Add("Partitioned");
+        return options;
     }
 }
 

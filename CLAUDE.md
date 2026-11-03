@@ -113,7 +113,10 @@ Magic link → JWT + refresh cookie, detailed end-to-end in `docs/architecture.m
   Refresh tokens: 180-day sliding TTL (renewed on every use, so an active user never hits the
   cap), rotated every use, httpOnly cookie scoped to `/auth`, `SameSite=None` in production
   (frontend and API are on different domains — `Strict`/`Lax` would silently drop the cookie on
-  every cross-site refresh call) and `SameSite=Strict` in dev (same-origin via Vite's proxy).
+  every cross-site refresh call) and `SameSite=Strict` in dev (same-origin via Vite's proxy). In
+  production it is also `Partitioned`: it is a third-party cookie, which Chrome refuses to store
+  when third-party cookies are blocked, so without CHIPS people are asked to sign in every visit.
+  `/auth/refresh` logs whether the cookie arrived, which is how to tell "never sent" from "rejected".
 - The auth abstraction is `IPasswordlessAuthenticator` (`Features/Auth/`), implemented by
   `PasswordlessAuthenticator` — deliberately generic so passkeys/WebAuthn can be added later as an alternate
   implementation without touching endpoints.

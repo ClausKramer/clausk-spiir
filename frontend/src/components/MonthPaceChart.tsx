@@ -1,10 +1,9 @@
 import { useState } from 'react'
 import { EXPENSE, NEUTRAL, SURFACE } from '../lib/chartColors'
+import { useChartWidth } from '../lib/useChartWidth'
 
-const W = 760
 const H = 230
 const PAD = { top: 14, right: 16, bottom: 28, left: 62 }
-const PLOT_W = W - PAD.left - PAD.right
 const PLOT_H = H - PAD.top - PAD.bottom
 
 const kr = (n: number) => Math.round(n).toLocaleString('da-DK')
@@ -36,6 +35,8 @@ interface Props {
 // on the 1st shows up as a step in both, which is why the comparison is fair even early on,
 // unlike a daily average that spreads that one step across the month.
 export function MonthPaceChart({ cumulative, typical, daysInMonth, expectedEnd }: Props) {
+  const [chartRef, W] = useChartWidth()
+  const PLOT_W = W - PAD.left - PAD.right
   const [hover, setHover] = useState<number | null>(null)
 
   const elapsed = cumulative.length
@@ -57,12 +58,12 @@ export function MonthPaceChart({ cumulative, typical, daysInMonth, expectedEnd }
   const typicalAt = hover !== null ? typical?.[hover - 1] : undefined
 
   return (
-    <div className="relative">
+    <div ref={chartRef} className="relative">
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="Spending so far this month against a typical month">
         {ticks.map((t) => (
           <g key={t}>
             <line x1={PAD.left} x2={W - PAD.right} y1={y(t)} y2={y(t)} stroke="#2a3346" strokeWidth={1} />
-            <text x={PAD.left - 10} y={y(t) + 4} textAnchor="end" className="fill-slate-500" fontSize={11}>
+            <text x={PAD.left - 10} y={y(t) + 4} textAnchor="end" className="fill-slate-400" fontSize={12}>
               {kr(t)}
             </text>
           </g>
@@ -106,7 +107,7 @@ export function MonthPaceChart({ cumulative, typical, daysInMonth, expectedEnd }
         )}
 
         {labelDays.map((d) => (
-          <text key={`l-${d}`} x={x(d)} y={H - 8} textAnchor="middle" className="fill-slate-500" fontSize={11}>
+          <text key={`l-${d}`} x={x(d)} y={H - 8} textAnchor="middle" className="fill-slate-400" fontSize={12}>
             {d}
           </text>
         ))}

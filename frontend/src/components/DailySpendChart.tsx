@@ -1,15 +1,14 @@
 import { useState } from 'react'
 import { EXPENSE, NET, SURFACE } from '../lib/chartColors'
+import { useChartWidth } from '../lib/useChartWidth'
 
 export interface DailySpend {
   day: number
   amount: number
 }
 
-const W = 760
 const H = 250
 const PAD = { top: 16, right: 14, bottom: 28, left: 62 }
-const PLOT_W = W - PAD.left - PAD.right
 const PLOT_H = H - PAD.top - PAD.bottom
 
 const kr = (n: number) => Math.round(n).toLocaleString('da-DK')
@@ -39,9 +38,11 @@ interface Props {
 // point: it shows how much one day moved the rate. A second axis would flatter the average
 // into looking comparable to the bars, which is exactly the false reading to avoid.
 export function DailySpendChart({ daily, daysInMonth, elapsedDays, onSelectDay }: Props) {
+  const [chartRef, W] = useChartWidth()
+  const PLOT_W = W - PAD.left - PAD.right
   const [hover, setHover] = useState<number | null>(null)
 
-  if (daily.length === 0) return <p className="py-8 text-center text-sm text-slate-600">No data for this month.</p>
+  if (daily.length === 0) return <p className="py-8 text-center text-sm text-slate-400">No data for this month.</p>
 
   // Running average: everything spent up to and including day d, divided by d. Only defined
   // over days that have happened — dividing by days still to come would drag it toward zero
@@ -81,12 +82,12 @@ export function DailySpendChart({ daily, daysInMonth, elapsedDays, onSelectDay }
   const labelDays = daily.map((d) => d.day).filter((d) => d === 1 || d % 5 === 0 || d === daysInMonth)
 
   return (
-    <div className="relative">
+    <div ref={chartRef} className="relative">
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="Daily spending and running average per day">
         {ticks.map((t) => (
           <g key={t}>
             <line x1={PAD.left} x2={W - PAD.right} y1={y(t)} y2={y(t)} stroke="#2a3346" strokeWidth={1} />
-            <text x={PAD.left - 10} y={y(t) + 4} textAnchor="end" className="fill-slate-500" fontSize={11}>
+            <text x={PAD.left - 10} y={y(t) + 4} textAnchor="end" className="fill-slate-400" fontSize={12}>
               {kr(t)}
             </text>
           </g>
@@ -123,7 +124,7 @@ export function DailySpendChart({ daily, daysInMonth, elapsedDays, onSelectDay }
         )}
 
         {labelDays.map((d) => (
-          <text key={`l-${d}`} x={bandX(d) + band / 2} y={H - 8} textAnchor="middle" className="fill-slate-500" fontSize={11}>
+          <text key={`l-${d}`} x={bandX(d) + band / 2} y={H - 8} textAnchor="middle" className="fill-slate-400" fontSize={12}>
             {d}
           </text>
         ))}
@@ -191,7 +192,7 @@ export function DailySpendChart({ daily, daysInMonth, elapsedDays, onSelectDay }
             </div>
           )}
           {onSelectDay && (active?.amount ?? 0) > 0 && (
-            <div className="mt-1 border-t border-slate-700 pt-1 text-[0.65rem] text-slate-500">
+            <div className="mt-1 border-t border-slate-700 pt-1 text-xs text-slate-400">
               Click to see the day's transactions
             </div>
           )}
@@ -211,7 +212,7 @@ export function DailySpendChart({ daily, daysInMonth, elapsedDays, onSelectDay }
         </span>
       </div>
 
-      <p className="mt-2 text-center text-[0.72rem] text-slate-500">
+      <p className="mt-2 text-center text-xs text-slate-400">
         {elapsed === 0 ? (
           'This month hasn’t started yet.'
         ) : isPartial ? (

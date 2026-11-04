@@ -1,17 +1,17 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { getInstitutions, connectBank } from '../api/accounts'
+import { EmptyState, INPUT, LoadError, PageHeader, Spinner } from '../components/ui'
 
 export function ConnectBankPage() {
   const [search, setSearch] = useState('')
 
-  const { data: institutions = [], isLoading, isError } = useQuery({
+  const { data: institutions = [], isLoading, isError, refetch, isRefetching } = useQuery({
     queryKey: ['institutions'],
     queryFn: () => getInstitutions('DK'),
   })
 
-  const { mutate: doConnect, isPending: connecting } = useMutation({
+  const { mutate: doConnect, isPending: connecting, isError: connectFailed } = useMutation({
     mutationFn: ({ name, country }: { name: string; country: string }) => connectBank(name, country),
     onSuccess: ({ url }) => {
       window.location.href = url
@@ -23,61 +23,59 @@ export function ConnectBankPage() {
   )
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center gap-4">
-        <Link to="/accounts" className="text-slate-500 hover:text-slate-700 text-sm">← Back</Link>
-        <span className="text-lg font-semibold text-slate-800">Choose your bank</span>
-      </header>
+    <div className="max-w-xl">
+      <PageHeader
+        title="Choose your bank"
+        sub="You'll approve read-only access at your bank, then come straight back."
+        back={{ to: '/accounts', label: 'Accounts' }}
+      />
 
-      <main className="mx-auto max-w-xl px-6 py-8">
-        <input
-          type="search"
-          placeholder="Search banks…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="w-full rounded-lg border border-slate-300 px-4 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 mb-4"
-        />
+      <input
+        type="search"
+        placeholder="Search banks…"
+        aria-label="Search banks"
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        className={`${INPUT} mb-4 w-full`}
+      />
 
-        {isLoading && (
-          <div className="flex justify-center py-12">
-            <div className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-600 border-t-transparent" />
-          </div>
-        )}
+      {connectFailed && (
+        <p className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300" role="alert">
+          Couldn't start the connection with that bank. Try again in a moment.
+        </p>
+      )}
 
-        {isError && (
-          <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
-            Could not load banks. Make sure Enable Banking credentials are configured in user-secrets.
-          </div>
-        )}
-
-        <div className="rounded-xl bg-white border border-slate-100 shadow-sm divide-y divide-slate-100">
+      {isLoading ? (
+        <Spinner />
+      ) : isError ? (
+        <LoadError what="the list of banks" hint="The bank connection service didn't answer." onRetry={() => refetch()} retrying={isRefetching} />
+      ) : (
+        <div className="divide-y divide-[#232b3b] rounded-xl border border-[#232b3b] bg-[#1a1f2e]">
           {filtered.map((inst) => (
             <button
               key={`${inst.name}:${inst.country}`}
               disabled={connecting}
               onClick={() => doConnect({ name: inst.name, country: inst.country })}
-              className="w-full flex items-center gap-4 px-5 py-4 hover:bg-slate-50 disabled:opacity-50 text-left"
+              className="flex w-full items-center gap-4 px-4 py-3 text-left first:rounded-t-xl last:rounded-b-xl hover:bg-white/[0.03] disabled:opacity-50"
             >
               {inst.logo ? (
-                <img src={inst.logo} alt={inst.name} className="h-8 w-8 object-contain rounded" />
+                <img src={inst.logo} alt="" className="h-8 w-8 rounded bg-white object-contain" />
               ) : (
-                <div className="h-8 w-8 rounded bg-slate-200 flex items-center justify-center text-slate-500 text-xs font-bold">
+                <div className="flex h-8 w-8 items-center justify-center rounded bg-[#232b3b] text-xs font-bold text-slate-300">
                   {inst.name[0]}
                 </div>
               )}
-              <div>
-                <p className="text-sm font-medium text-slate-800">{inst.name}</p>
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-slate-200">{inst.name}</p>
                 {inst.bic && <p className="text-xs text-slate-400">{inst.bic}</p>}
               </div>
-              <span className="ml-auto text-slate-300">›</span>
+              <span className="ml-auto text-slate-400" aria-hidden>›</span>
             </button>
           ))}
 
-          {!isLoading && filtered.length === 0 && (
-            <p className="px-5 py-8 text-center text-sm text-slate-400">No banks found.</p>
-          )}
+          {filtered.length === 0 && <EmptyState title={`No bank matches “${search}”`} />}
         </div>
-      </main>
+      )}
     </div>
   )
 }

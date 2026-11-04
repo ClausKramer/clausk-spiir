@@ -77,7 +77,12 @@ public static class TransactionEndpoints
 
         return TypedResults.Ok(new
         {
-            items = items.Select(t => WithFlags(t, IsTransfer(t, paired), tagsByTransaction[t.Id])),
+            // Without a period there are no totals, so this is the per-account list: it shows what
+            // has been marked, and keeps the badge that lets a mark be undone.
+            items = items.Select(t => WithFlags(
+                t,
+                IsTransfer(t, paired) || (!from.HasValue && (t.IsManualTransfer || t.CategoryKind == CategoryKind.Transfer)),
+                tagsByTransaction[t.Id])),
             totalCount = total,
             page,
             pageSize,
@@ -807,24 +812,40 @@ public static class TransactionEndpoints
             .ToList();
     }
 
-    private static List<TransactionListItem> ExcludingInternalTransfers(IReadOnlyList<TransactionListItem> items) =>
-        items.Where(t => !IsTransfer(t, InternalTransferDetector.FindPairedIds(items))).ToList();
-
-    // A transfer is one the user marked by hand — which always wins, since they can see a
-    // counterpart the data doesn't contain — or one the matcher paired off, or one filed under a
-    // Transfer-kind category.
+    // Which rows net out of the view, and so are left out of income and spending.
     //
-    // The category case covers what pairing can't: a transfer to an account that isn't connected
-    // has no opposite leg in the data, so it never pairs, and a leg still in transit pairs only
-    // once its counterpart arrives. Filing it under "Intern overførsel" — by the default rule or by
-    // hand — is a statement that it is not spending, and the totals should believe it. Everything
-    // routes through here, so the dashboard, budgets and every drill-down agree.
-    internal static bool IsTransfer(TransactionListItem t, HashSet<Guid> pairedIds) =>
-        t.IsManualTransfer || t.CategoryKind == CategoryKind.Transfer || pairedIds.Contains(t.Id);
+    // That depends on what is being looked at. A transfer between two of your accounts nets out
+    // only when both are in view; with one account selected, the same transfer is real money
+    // arriving in or leaving that account. Dropping it there made a budget account — whose only
+    // income is the transfer from the salary account — show 0 income and an unknowable balance.
+    //
+    // So a pair is excluded when both legs are in view, whichever view that is. A leg with no
+    // partner in view is excluded only when the view is every account, and then only on the
+    // user's say-so: marked by hand, or filed under a Transfer-kind category. That covers what
+    // pairing can't — a transfer to an account that isn't connected has no opposite leg anywhere,
+    // and a leg still in transit pairs only once its counterpart arrives — because across all
+    // accounts such a row is money leaving the system, not spending. In a single account it is
+    // still money leaving that account, so it counts.
+    internal static HashSet<Guid> FindTransferIds(IReadOnlyList<TransactionListItem> settled, bool wholeView)
+    {
+        var ids = InternalTransferDetector.FindPairedIds(settled);
+        if (!wholeView) return ids;
+
+        foreach (var t in settled)
+            if (t.IsManualTransfer || t.CategoryKind == CategoryKind.Transfer) ids.Add(t.Id);
+        return ids;
+    }
+
+    // Everything — dashboard, budgets, recurring, month outlook and every drill-down — routes
+    // through here, so they agree about which rows count.
+    internal static bool IsTransfer(TransactionListItem t, HashSet<Guid> transferIds) => transferIds.Contains(t.Id);
 
     // Pairing needs to see beyond the period being aggregated: a transfer sent on the 31st and
     // received on the 1st has one leg outside any single month, and would otherwise never pair
     // no matter which month you looked at.
+    //
+    // PairedIds is the set of rows that net out of this view (see FindTransferIds); the name is
+    // kept because the callers read it as "the transfer legs".
     internal static async Task<(List<TransactionListItem> InPeriod, HashSet<Guid> PairedIds)> LoadWithPairingAsync(
         TransactionRepository transactions,
         Guid userId,
@@ -840,7 +861,9 @@ public static class TransactionEndpoints
         // would otherwise consume the pairing its original needed, leaving the real one counted
         // as income or spending.
         var settled = padded.Where(t => !IsFuture(t) && !t.IsDuplicate).ToList();
-        var pairedIds = InternalTransferDetector.FindPairedIds(settled);
+        // No account filter means every account. A client that selects all of them sends none,
+        // so that is the case that has to be treated as the whole view.
+        var pairedIds = FindTransferIds(settled, wholeView: accountIds is not { Length: > 0 });
         var inPeriod = settled.Where(t => t.BookingDate >= from && t.BookingDate < to).ToList();
 
         return (inPeriod, pairedIds);

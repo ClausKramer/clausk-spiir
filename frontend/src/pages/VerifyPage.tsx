@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { verifyToken } from '../api/auth'
+import { Spinner } from '../components/ui'
 
 export function VerifyPage() {
   const [params] = useSearchParams()
@@ -29,10 +30,10 @@ export function VerifyPage() {
   }, [])
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-50">
+    <div className="flex min-h-dvh items-center justify-center">
       <div className="text-center">
-        <div className="h-10 w-10 animate-spin rounded-full border-4 border-indigo-600 border-t-transparent mx-auto" />
-        <p className="mt-4 text-sm text-slate-500">Completing sign-in…</p>
+        <Spinner />
+        <p className="text-sm text-slate-400">Signing you in…</p>
       </div>
     </div>
   )

@@ -7,6 +7,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
+- **A failed load was reported as having no data.** With the API down, the dashboard said "No
+  transactions yet, connect a bank" and the month view showed a spinner forever; the category, flow
+  and drill-down pages said there was nothing to show. Every page now has a distinct failed state
+  with a retry (`LoadError`).
+- **Amounts were cut off on a phone.** `BarRow`'s gutters squeezed its track until 3.120 kr. read as
+  "120 kr", and transaction tables pushed the amount off the right edge. Both now stack on narrow
+  screens, and the transaction table is one shared `TransactionList`.
+- **`BarRow` broke its own rule.** The bar's fixed padding acted as a 20px minimum width, so a 0.5%
+  bar drew far too long. Padding now applies only when the amount sits inside the bar.
+- **Sign out appeared to do nothing.** It cleared the session but stayed on the page. It now goes to
+  the login page.
+- **An expired sign-in link gave no explanation.** The login page ignored `?error=invalid_token`.
+- **Controls that only appeared on hover** (mark as transfer, mark as duplicate, add tag) couldn't be
+  reached on a touch screen, and month bars showed their values only on hover. Chart axis labels
+  also scaled down to about 5px on a phone; charts now draw at their real pixel width.
+- **Dialogs** ignored Escape and weren't announced to screen readers; all now go through `Modal`.
 - **Asked to sign in on every visit, in Chrome.** Production logs showed every `/auth/refresh`
   since logging was added arriving with no `refresh_token` cookie — on Android and Windows Chrome
   alike, never once "Refresh ok". The site (`*.azurestaticapps.net`) and the API
@@ -21,6 +37,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   so deleting still works. Production only: `Partitioned` requires `Secure`. A cookie is keyed to
   the site it was set from, so the site must keep being opened from its one URL. The durable fix
   would be serving site and API from one domain, which needs DNS.
+- **A single account lost the income that arrives by transfer.** The previous change made a row
+  filed under a Transfer-kind category drop out of every view, so a budget account — whose only
+  income is the transfer from the salary account — showed 0 income. Whether a row nets out now
+  depends on what is in view (`TransactionEndpoints.FindTransferIds`): a pair is excluded when both
+  legs are in view; a leg with no partner in view is excluded only when the view is every account,
+  and then only if marked by hand or filed under a Transfer category. With one account selected,
+  nothing nets out, so its income and spending are simply everything that came in and went out —
+  which `verify-month.mjs` now checks against the account's own transaction list, a path that knows
+  nothing about transfers. Across all accounts the totals are unchanged.
 - **Spending inflated by planned payments and uncounted transfers.**
   - Banks list a scheduled payment days before it happens and later re-issue it as a booked entry
     under a different id. Skipping pending entries at import (earlier fix) only stopped new ones;
@@ -73,6 +98,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   immediately when the failing request is the refresh call itself.
 
 ### Added
+- **Expected balance at month end** on the month view, for whichever accounts are selected: the
+  tracked balance now, plus the income a typical month still has to bring, minus the bills still to
+  come, minus everyday spending at its usual pace for the days left. It is only as good as the
+  history behind the tracked balance, which is a sum of the transactions this app holds.
 - **Net worth figures can be edited where they are shown.** Previously the only way to change a
   figure was "Record values", which only opened the month currently due — so a past month could
   never be corrected, and the per-account numbers in the table were read-only. Now the table's
@@ -116,6 +145,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   React Router's client-side routes (`/login`, `/dashboard`, etc.) don't 404 on direct load.
 
 ### Changed
+- **One app rather than two.** Login, accounts, bank connection, account transactions and the legal
+  pages were on a light theme and everything else dark; all are now on the dark surfaces the chart
+  palette was validated against. A shared `AppLayout` gives every signed-in page the same navigation:
+  links along the top on a wide screen, tabs along the bottom on a phone.
+- **Legibility.** The smallest text anywhere is now 12px, and text on the dark surfaces is slate-400
+  or lighter, since slate-500 and slate-600 fall short of 4.5:1. Chart reds and greens no longer
+  colour small text, and section headings dropped their all-caps and emoji.
+- **The month view** leads with what has been spent, and "What a typical month is made of" folds away
+  below the bills still to come (`?typical=open`). The transaction panel now says when it is showing
+  only part of the period, with a link to the rest.
 - **Bank data provider swapped: GoCardless → Enable Banking.** GoCardless's Bank Account Data API (the
   open-banking transaction-fetching product this app was originally built around) stopped accepting new
   signups in July 2025 and its developer docs shut down 24 August 2026 — not viable for a new integration.

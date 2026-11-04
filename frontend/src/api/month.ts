@@ -62,6 +62,17 @@ export interface MonthOutlook {
   stillToCome: { total: number; items: StillToComeItem[] }
   // Spent so far, plus bills still due, plus everyday spending at its usual pace. An estimate.
   expectedMonthEnd: number | null
+  // Where the balance of the accounts in view is heading. Null for a finished month.
+  balance: {
+    // The tracked balance — the sum of the transactions this app holds, so only as good as the
+    // history behind it.
+    current: number
+    // What a typical month brings, less what has already arrived. Null without history.
+    incomeStillToCome: number | null
+    billsStillToCome: number
+    everydayStillToCome: number | null
+    expectedEnd: number | null
+  } | null
 }
 
 export async function getMonthOutlook(accountIds: string[], period: Period): Promise<MonthOutlook> {

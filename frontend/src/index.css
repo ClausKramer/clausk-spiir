@@ -1,11 +1,37 @@
 @import "tailwindcss";
 
+:root {
+  /* Native controls and scrollbars follow the page, which is dark everywhere. */
+  color-scheme: dark;
+}
+
 *, *::before, *::after {
   box-sizing: border-box;
 }
 
 body {
   margin: 0;
+  background: #0f1117;
+  color: #e2e8f0;
   font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
   -webkit-font-smoothing: antialiased;
+}
+
+/* Unlayered, so it wins over the `outline-none` utility: a keyboard user must always be able to
+   see where they are, on every control, without each one having to remember. */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+summary:focus-visible,
+label:focus-within:has(input.sr-only) {
+  outline: 2px solid #818cf8;
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 1.5s !important;
+    transition-duration: 0.01ms !important;
+  }
 }

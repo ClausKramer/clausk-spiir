@@ -1,14 +1,15 @@
 import { Navigate } from 'react-router-dom'
 import { useMe } from '../hooks/useAuth'
 import { isUnauthorized } from '../api/client'
+import { BUTTON_PRIMARY, Spinner } from './ui'
 
 export function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { data, isLoading, isError, error, refetch, isRefetching } = useMe()
 
   if (isLoading) {
     return (
-      <div className="flex h-screen items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-600 border-t-transparent" />
+      <div className="flex h-dvh items-center justify-center">
+        <Spinner />
       </div>
     )
   }
@@ -20,16 +21,15 @@ export function ProtectedRoute({ children }: { children: React.ReactNode }) {
     if (isUnauthorized(error)) return <Navigate to="/login" replace />
 
     return (
-      <div className="flex h-screen flex-col items-center justify-center gap-3 px-4 text-center">
-        <div className="text-3xl">⚠️</div>
-        <p className="max-w-sm text-sm text-slate-500">
+      <div className="flex h-dvh flex-col items-center justify-center gap-3 px-4 text-center" role="alert">
+        <p className="max-w-sm text-sm text-slate-300">
           Couldn't reach the server. You're still signed in — this is usually the database waking
           up after being idle.
         </p>
         <button
           onClick={() => refetch()}
           disabled={isRefetching}
-          className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+          className={BUTTON_PRIMARY}
         >
           {isRefetching ? 'Retrying…' : 'Try again'}
         </button>

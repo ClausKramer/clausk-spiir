@@ -197,6 +197,8 @@ public static class MonthEndpoints
 
         object? typical = null;
         decimal? expectedMonthEnd = isFinished ? spentSoFar : null;
+        decimal? incomeStillToCome = null;
+        decimal? everydayStillToCome = null;
 
         if (baseline.Count > 0)
         {
@@ -244,7 +246,34 @@ public static class MonthEndpoints
             // What's been spent, plus the bills still due, plus everyday spending at its usual
             // pace for the days left. Bills are kept out of the "usual pace" part so one that has
             // already fallen this month isn't counted a second time as an average of past ones.
-            if (isCurrent) expectedMonthEnd = spentSoFar + stillToComeTotal + everydayRemaining;
+            if (isCurrent)
+            {
+                expectedMonthEnd = spentSoFar + stillToComeTotal + everydayRemaining;
+                everydayStillToCome = everydayRemaining;
+                // Income still to arrive: what a typical month brings, less what has come. Never
+                // negative — a month that has already out-earned the usual doesn't owe anything back.
+                incomeStillToCome = Math.Max(0m, Typ(b => Sum(b.Income, 1, 31)) - incomeSoFar);
+            }
+        }
+
+        // Whether the balance stays above zero is the question for a single account, such as a
+        // budget account fed by a transfer on payday. The balance is what this app has tracked —
+        // the sum of the transactions it holds — so it is only as good as the history behind it.
+        object? balance = null;
+        if (isCurrent)
+        {
+            var balanceNow = await transactions.GetNetBalanceAsync(userId, accountIds, today, ct);
+            decimal? expectedEnd = incomeStillToCome is null || everydayStillToCome is null
+                ? null
+                : balanceNow + incomeStillToCome.Value - stillToComeTotal - everydayStillToCome.Value;
+            balance = new
+            {
+                current = balanceNow,
+                incomeStillToCome,
+                billsStillToCome = stillToComeTotal,
+                everydayStillToCome,
+                expectedEnd,
+            };
         }
 
         return TypedResults.Ok(new
@@ -265,6 +294,7 @@ public static class MonthEndpoints
             typical,
             stillToCome = new { total = stillToComeTotal, items = stillToCome },
             expectedMonthEnd,
+            balance,
         });
     }
 }

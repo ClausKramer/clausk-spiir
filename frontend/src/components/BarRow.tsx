@@ -14,7 +14,7 @@ interface Props {
   meta?: ReactNode
   to?: string
   title?: string
-  /** Tailwind width class for the left gutter, so a chart's labels line up with each other. */
+  /** Tailwind width class for the left gutter on wide screens (`sm:w-…`), so a chart's labels line up. */
   labelWidth?: string
   metaWidth?: string
 }
@@ -25,7 +25,13 @@ interface Props {
 // carried an 8–10% minimum width so the amount would fit inside them, which drew a category
 // worth 0.5% of the largest at 8% — seventeen times too long, and the reader has no way to
 // know. The bar is now drawn at its true fraction and the label moves outside when the bar is
-// too narrow to hold it.
+// too narrow to hold it. Padding counts too: it goes on the bar only when the amount is inside
+// it, since 20px of padding is itself a minimum width.
+//
+// On a phone there is no room for gutters beside a bar: they squeezed the track until the amount
+// was clipped, so 3.120 kr. read as "120 kr". Label and amount go on a line of their own above a
+// full-width track instead. The meta column keeps a fixed width there, because bars are only
+// comparable if every track in the chart is the same length.
 export function BarRow({
   label,
   fraction,
@@ -34,7 +40,7 @@ export function BarRow({
   meta,
   to,
   title,
-  labelWidth = 'w-40',
+  labelWidth = 'sm:w-40',
   metaWidth,
 }: Props) {
   const pct = Math.max(0, Math.min(1, fraction)) * 100
@@ -44,40 +50,43 @@ export function BarRow({
 
   const body = (
     <>
-      <div className={`${labelWidth} shrink-0 truncate text-right text-xs text-slate-400`}>{label}</div>
-      <div className="flex h-[22px] flex-1 items-center overflow-hidden rounded" style={{ background: TRACK }}>
-        <div
-          className="flex h-full items-center justify-end rounded px-2.5"
-          style={{
-            width: `${pct}%`,
-            // A hairline so a small-but-real value is still visible. Unlike the old percentage
-            // floor this is a fixed 2px — under half a percent of the track — so it can't
-            // meaningfully misstate a proportion.
-            minWidth: pct > 0 ? 2 : 0,
-            background: color,
-          }}
-        >
-          {inside && (
-            <span className="whitespace-nowrap text-[0.7rem] font-semibold text-white/95">{amount}</span>
+      <div className={`${labelWidth} min-w-0 truncate text-sm text-slate-300 sm:shrink-0 sm:text-right sm:text-xs`}>{label}</div>
+      <div className="text-sm font-semibold whitespace-nowrap text-slate-200 tabular-nums sm:hidden">{amount}</div>
+      <div className="col-span-2 flex min-w-0 items-center gap-2.5 sm:flex-1">
+        <div className="flex h-2.5 min-w-0 flex-1 items-center overflow-hidden rounded sm:h-[22px]" style={{ background: TRACK }}>
+          <div
+            className={`flex h-full items-center justify-end rounded ${inside ? 'sm:px-2.5' : ''}`}
+            style={{
+              width: `${pct}%`,
+              // A hairline so a small-but-real value is still visible. Unlike the old percentage
+              // floor this is a fixed 2px — under half a percent of the track — so it can't
+              // meaningfully misstate a proportion.
+              minWidth: pct > 0 ? 2 : 0,
+              background: color,
+            }}
+          >
+            {inside && (
+              <span className="hidden text-xs font-semibold whitespace-nowrap text-white/95 sm:inline">{amount}</span>
+            )}
+          </div>
+          {!inside && (
+            <span className="hidden pl-2 text-xs font-semibold whitespace-nowrap text-slate-300 tabular-nums sm:inline">
+              {amount}
+            </span>
           )}
         </div>
-        {!inside && (
-          <span className="whitespace-nowrap pl-2 text-[0.7rem] font-semibold tabular-nums text-slate-300">
-            {amount}
-          </span>
+        {meta !== undefined && (
+          <div className={`${metaWidth ?? 'w-24'} shrink-0 text-right text-xs text-slate-400 tabular-nums`}>
+            {meta}
+          </div>
         )}
       </div>
-      {meta !== undefined && (
-        <div className={`${metaWidth ?? 'w-24'} shrink-0 text-right text-[0.7rem] tabular-nums text-slate-500`}>
-          {meta}
-        </div>
-      )}
     </>
   )
 
-  const cls = 'flex items-center gap-2.5 rounded'
+  const cls = 'grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-2.5 gap-y-1 rounded sm:flex sm:items-center'
   return to ? (
-    <Link to={to} className={`${cls} -mx-1 px-1 hover:bg-white/[0.04]`} title={title}>
+    <Link to={to} className={`${cls} -mx-1 px-1 py-0.5 hover:bg-white/[0.04]`} title={title}>
       {body}
     </Link>
   ) : (

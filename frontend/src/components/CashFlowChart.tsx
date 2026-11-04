@@ -3,12 +3,11 @@ import type { MonthlyFlow } from '../api/transactions'
 // This chart's three series are the FLOW set in lib/chartColors — validated together under
 // all-pairs against this surface. See that file before changing any of them.
 import { INCOME, EXPENSE, NET, SURFACE } from '../lib/chartColors'
+import { useChartWidth } from '../lib/useChartWidth'
 import { MONTH_NAMES } from '../lib/period'
 
-const W = 760
 const H = 280
 const PAD = { top: 16, right: 14, bottom: 30, left: 62 }
-const PLOT_W = W - PAD.left - PAD.right
 const PLOT_H = H - PAD.top - PAD.bottom
 const MAX_BAR = 24 // never fill the band — the leftover is deliberate air
 
@@ -33,9 +32,11 @@ export function CashFlowChart({
   // Drill-down for one bar. Omitted, the chart stays purely presentational.
   onSelect?: (direction: 'income' | 'expense', month: MonthlyFlow) => void
 }) {
+  const [chartRef, W] = useChartWidth()
+  const PLOT_W = W - PAD.left - PAD.right
   const [hover, setHover] = useState<number | null>(null)
 
-  if (data.length === 0) return <p className="py-8 text-center text-sm text-slate-600">No data for this period.</p>
+  if (data.length === 0) return <p className="py-8 text-center text-sm text-slate-400">No data for this period.</p>
 
   // One shared scale for all three series — they're all kroner. A second y-axis would let the
   // reader infer relationships between bars and line that the numbers don't support.
@@ -62,13 +63,13 @@ export function CashFlowChart({
   const active = hover !== null ? data[hover] : null
 
   return (
-    <div className="relative">
+    <div ref={chartRef} className="relative">
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="Monthly income, expenses and net">
         {/* Gridlines: hairline, solid, recessive */}
         {ticks.map((t) => (
           <g key={t}>
             <line x1={PAD.left} x2={W - PAD.right} y1={y(t)} y2={y(t)} stroke="#2a3346" strokeWidth={1} />
-            <text x={PAD.left - 10} y={y(t) + 4} textAnchor="end" className="fill-slate-500" fontSize={11}>
+            <text x={PAD.left - 10} y={y(t) + 4} textAnchor="end" className="fill-slate-400" fontSize={12}>
               {kr(t)}
             </text>
           </g>
@@ -90,8 +91,8 @@ export function CashFlowChart({
                   Skipped on bars shorter than the radius, where it would sit above the bar's own top. */}
               {zeroY - y(d.income) > 4 && <rect x={incomeX} y={zeroY - 4} width={barW} height={4} fill={INCOME} />}
               {zeroY - y(d.expense) > 4 && <rect x={expenseX} y={zeroY - 4} width={barW} height={4} fill={EXPENSE} />}
-              <text x={cx} y={H - 10} textAnchor="middle" className="fill-slate-500" fontSize={11}>
-                {MONTH_NAMES[d.month - 1]}
+              <text x={cx} y={H - 10} textAnchor="middle" className="fill-slate-400" fontSize={12}>
+                {W < 520 ? MONTH_NAMES[d.month - 1].slice(0, 1) : MONTH_NAMES[d.month - 1]}
               </text>
             </g>
           )
@@ -187,7 +188,7 @@ export function CashFlowChart({
             </div>
           ))}
           {onSelect && (
-            <div className="mt-1 border-t border-slate-700 pt-1 text-[0.65rem] text-slate-500">
+            <div className="mt-1 border-t border-slate-700 pt-1 text-xs text-slate-400">
               Click a bar to break it down
             </div>
           )}

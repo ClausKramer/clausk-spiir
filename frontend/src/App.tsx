@@ -16,6 +16,7 @@ import { RecurringPage } from './pages/RecurringPage'
 import { PrivacyPage } from './pages/PrivacyPage'
 import { TermsPage } from './pages/TermsPage'
 import { ProtectedRoute } from './components/ProtectedRoute'
+import { AppLayout } from './components/AppLayout'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -32,18 +33,20 @@ export function App() {
           <Route path="/auth/verify" element={<VerifyPage />} />
           <Route path="/privacy" element={<PrivacyPage />} />
           <Route path="/terms" element={<TermsPage />} />
-          <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
-          <Route path="/accounts" element={<ProtectedRoute><AccountsPage /></ProtectedRoute>} />
-          <Route path="/accounts/connect" element={<ProtectedRoute><ConnectBankPage /></ProtectedRoute>} />
-          <Route path="/accounts/connected" element={<ProtectedRoute><ConnectedPage /></ProtectedRoute>} />
-          {/* After the literal /accounts/* routes so "connect"/"connected" aren't read as ids. */}
-          <Route path="/accounts/:id/transactions" element={<ProtectedRoute><AccountTransactionsPage /></ProtectedRoute>} />
-          <Route path="/spending/:categoryId" element={<ProtectedRoute><CategoryDashboardPage /></ProtectedRoute>} />
-          <Route path="/networth" element={<ProtectedRoute><NetWorthPage /></ProtectedRoute>} />
-          <Route path="/budgets" element={<ProtectedRoute><BudgetsPage /></ProtectedRoute>} />
-          <Route path="/recurring" element={<ProtectedRoute><RecurringPage /></ProtectedRoute>} />
-          <Route path="/view" element={<ProtectedRoute><TransactionsQueryPage /></ProtectedRoute>} />
-          <Route path="/flow/:direction" element={<ProtectedRoute><FlowDashboardPage /></ProtectedRoute>} />
+          <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
+            <Route path="/dashboard" element={<DashboardPage />} />
+            <Route path="/accounts" element={<AccountsPage />} />
+            <Route path="/accounts/connect" element={<ConnectBankPage />} />
+            <Route path="/accounts/connected" element={<ConnectedPage />} />
+            {/* After the literal /accounts/* routes so "connect"/"connected" aren't read as ids. */}
+            <Route path="/accounts/:id/transactions" element={<AccountTransactionsPage />} />
+            <Route path="/spending/:categoryId" element={<CategoryDashboardPage />} />
+            <Route path="/networth" element={<NetWorthPage />} />
+            <Route path="/budgets" element={<BudgetsPage />} />
+            <Route path="/recurring" element={<RecurringPage />} />
+            <Route path="/view" element={<TransactionsQueryPage />} />
+            <Route path="/flow/:direction" element={<FlowDashboardPage />} />
+          </Route>
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </BrowserRouter>

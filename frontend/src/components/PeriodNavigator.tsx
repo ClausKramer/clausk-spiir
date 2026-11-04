@@ -11,8 +11,6 @@ interface Props {
   // Adds an "All years" entry to the year select, for views that legitimately show everything
   // on record rather than a chosen period.
   allowAllYears?: boolean
-  dark?: boolean
-  label?: string
 }
 
 // Year + month selects with step-back/step-forward arrows. The arrows move by whatever unit is
@@ -24,8 +22,6 @@ export function PeriodNavigator({
   onChange,
   availableYears,
   allowAllYears = false,
-  dark = false,
-  label = 'Period',
 }: Props) {
   const minYear = Math.min(...availableYears)
   const maxYear = Math.max(...availableYears)
@@ -65,20 +61,12 @@ export function PeriodNavigator({
 
   const unit = stepsByMonth ? 'month' : 'year'
 
-  const selectClass = dark
-    ? 'rounded-lg border border-slate-700 bg-[#1a1f2e] px-2.5 py-1 text-xs font-medium text-slate-200 outline-none focus:border-indigo-500'
-    : 'rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-sm font-medium text-slate-700 outline-none focus:border-indigo-500'
+  const selectClass = 'min-h-9 rounded-lg border border-slate-700 bg-[#1a1f2e] px-2.5 py-1 text-sm font-medium text-slate-200 outline-none focus:border-indigo-500'
 
-  const arrowClass = dark
-    ? 'rounded-lg border border-slate-700 bg-[#1a1f2e] px-2 py-1 text-xs text-slate-300 enabled:hover:bg-[#232b3b] disabled:opacity-30'
-    : 'rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-500 enabled:hover:bg-slate-100 disabled:opacity-30'
+  const arrowClass = 'min-h-9 min-w-9 rounded-lg border border-slate-700 bg-[#1a1f2e] px-2 py-1 text-sm text-slate-300 enabled:hover:bg-[#232b3b] disabled:opacity-30'
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <span className={`mr-1 text-[0.7rem] uppercase tracking-wider ${dark ? 'text-slate-500' : 'text-slate-400'}`}>
-        {label}
-      </span>
-
       <button
         onClick={() => step(-1)}
         disabled={!canStepBack}

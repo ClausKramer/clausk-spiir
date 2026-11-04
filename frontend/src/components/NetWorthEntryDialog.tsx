@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { getNetWorthEntry, saveNetWorthEntry, KIND_LABELS } from '../api/networth'
 import { MONTH_NAMES } from '../lib/period'
-import { INCOME, EXPENSE } from '../lib/chartColors'
+import { BUTTON_PRIMARY, BUTTON_SECONDARY, BUTTON_SMALL, Modal, Spinner } from './ui'
 
 interface Props {
   year: number
@@ -108,8 +108,8 @@ export function NetWorthEntryDialog({ year: initialYear, month: initialMonth, on
     return (
       <div key={item.id} className="flex items-center gap-3 py-1.5">
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm text-slate-200">{item.name}</div>
-          <div className="text-[0.65rem] text-slate-500">
+          <div className="text-sm break-words text-slate-200">{item.name}</div>
+          <div className="text-xs text-slate-400">
             {KIND_LABELS[item.kind]}
             {previous !== null && <> · last {kr(previous)}</>}
             {item.suggestedValue !== null && (
@@ -119,7 +119,7 @@ export function NetWorthEntryDialog({ year: initialYear, month: initialMonth, on
                 <button
                   type="button"
                   onClick={() => setEdits((v) => ({ ...v, [item.id]: String(Math.round(item.suggestedValue!)) }))}
-                  className="text-indigo-400 hover:underline"
+                  className="text-indigo-300 underline-offset-2 hover:underline"
                   title="What this app's own transaction history sums to — a suggestion, not the bank's balance"
                 >
                   use {kr(item.suggestedValue)}
@@ -130,9 +130,9 @@ export function NetWorthEntryDialog({ year: initialYear, month: initialMonth, on
         </div>
         {/* Up is good whichever kind of account it is, now that debts are negative: a mortgage
             moving from -500.000 to -490.000 is a rise of 10.000. */}
-        <div className="w-16 shrink-0 text-right text-[0.7rem] tabular-nums">
+        <div className="hidden w-16 shrink-0 text-right text-xs tabular-nums sm:block">
           {delta !== null && delta !== 0 && (
-            <span style={{ color: delta >= 0 ? INCOME : EXPENSE }}>
+            <span className={delta >= 0 ? 'text-emerald-400' : 'text-red-400'}>
               {delta > 0 ? '+' : ''}
               {kr(delta)}
             </span>
@@ -143,7 +143,7 @@ export function NetWorthEntryDialog({ year: initialYear, month: initialMonth, on
           value={valueOf(item)}
           onChange={(e) => setEdits((v) => ({ ...v, [item.id]: e.target.value }))}
           placeholder="—"
-          className="w-32 shrink-0 rounded border border-slate-700 bg-[#111620] px-2 py-1.5 text-right text-sm tabular-nums text-slate-200 outline-none focus:border-indigo-500"
+          className="min-h-9 w-28 shrink-0 rounded-lg border border-slate-700 bg-[#111620] px-2 py-1.5 text-right text-sm sm:w-32 tabular-nums text-slate-200 outline-none focus:border-indigo-500"
           aria-label={`${item.name} value for ${MONTH_NAMES[month - 1]} ${year}`}
         />
       </div>
@@ -151,57 +151,46 @@ export function NetWorthEntryDialog({ year: initialYear, month: initialMonth, on
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
-      <div
-        className="flex max-h-[88vh] w-full max-w-2xl flex-col rounded-xl border border-[#232b3b] bg-[#1a1f2e] shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="border-b border-[#232b3b] px-6 py-4">
-          <div className="flex items-center justify-between gap-3">
-            <h2 className="text-base font-semibold text-slate-100">
-              What was everything worth in {MONTH_NAMES[month - 1]} {year}?
-            </h2>
-            <div className="flex shrink-0 items-center gap-1">
+    <Modal title={`What was everything worth in ${MONTH_NAMES[month - 1]} ${year}?`} onClose={onClose} dismissable={!isPending}>
+        <div className="border-b border-[#232b3b] px-5 pt-1 pb-3">
+          <div className="mb-2 flex items-center gap-1">
               <button
                 type="button"
                 onClick={() => moveMonth(-1)}
                 disabled={isPending}
-                className="rounded border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:bg-[#232b3b] disabled:opacity-50"
+                className={`${BUTTON_SMALL} min-w-9`}
                 aria-label="Previous month"
               >
-                ←
+                ‹ Earlier
               </button>
               <button
                 type="button"
                 onClick={() => moveMonth(1)}
                 disabled={isPending}
-                className="rounded border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:bg-[#232b3b] disabled:opacity-50"
+                className={`${BUTTON_SMALL} min-w-9`}
                 aria-label="Next month"
               >
-                →
+                Later ›
               </button>
-            </div>
           </div>
-          <p className="mt-1 text-sm text-slate-500">
+          <p className="text-sm text-slate-400">
             Enter each balance as it stands: what you owe as a negative number, what you hold as a
             positive one. Leave a box empty to record nothing for that account this month.
           </p>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-6 py-3">
+        <div className="flex-1 overflow-y-auto px-5 py-3">
           {isLoading ? (
-            <div className="flex justify-center py-10">
-              <div className="h-6 w-6 animate-spin rounded-full border-4 border-indigo-500 border-t-transparent" />
-            </div>
+            <Spinner />
           ) : items.length === 0 ? (
-            <p className="py-8 text-center text-sm text-slate-500">
+            <p className="py-8 text-center text-sm text-slate-400">
               No accounts to value yet — add some first.
             </p>
           ) : (
             <>
               {assets.length > 0 && (
                 <>
-                  <div className="mb-1 mt-1 text-[0.65rem] font-semibold uppercase tracking-wide" style={{ color: INCOME }}>
+                  <div className="mt-1 mb-1 text-xs font-semibold text-emerald-400">
                     What you own
                   </div>
                   {assets.map(row)}
@@ -209,7 +198,7 @@ export function NetWorthEntryDialog({ year: initialYear, month: initialMonth, on
               )}
               {liabilities.length > 0 && (
                 <>
-                  <div className="mb-1 mt-4 text-[0.65rem] font-semibold uppercase tracking-wide" style={{ color: EXPENSE }}>
+                  <div className="mt-4 mb-1 text-xs font-semibold text-red-400">
                     What you owe
                   </div>
                   {liabilities.map(row)}
@@ -219,10 +208,10 @@ export function NetWorthEntryDialog({ year: initialYear, month: initialMonth, on
           )}
         </div>
 
-        <div className="border-t border-[#232b3b] px-6 py-4">
+        <div className="border-t border-[#232b3b] px-5 py-3">
           {items.length > 0 && (
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-sm">
-              <span className="text-slate-500">
+              <span className="text-slate-400">
                 {filled} of {items.length} filled in
               </span>
               <span className="tabular-nums text-slate-400">
@@ -235,20 +224,19 @@ export function NetWorthEntryDialog({ year: initialYear, month: initialMonth, on
             <button
               onClick={onClose}
               disabled={isPending}
-              className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-[#232b3b] disabled:opacity-50"
+              className={BUTTON_SECONDARY}
             >
               Not now
             </button>
             <button
               onClick={() => save()}
               disabled={isPending || items.length === 0}
-              className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+              className={BUTTON_PRIMARY}
             >
               {isPending ? 'Saving…' : `Record ${MONTH_NAMES[month - 1]}`}
             </button>
           </div>
         </div>
-      </div>
-    </div>
+      </Modal>
   )
 }

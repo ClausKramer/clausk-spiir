@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { useMe, useLogout } from '../hooks/useAuth'
 import {
   getTransactions,
   getDashboard,
@@ -12,8 +11,8 @@ import {
 } from '../api/transactions'
 import { MarkTransferDialog } from '../components/MarkTransferDialog'
 import { getBankAccounts } from '../api/accounts'
-import { CategoryPicker } from '../components/CategoryPicker'
-import { TagEditor } from '../components/TagEditor'
+import { ScheduledBadge, TransactionList, TransferBadge } from '../components/TransactionList'
+import { BUTTON_PRIMARY, BUTTON_SECONDARY, EmptyState, Kpi, LoadError, PageHeader, Panel, REVEAL_ON_ROW_HOVER, Spinner } from '../components/ui'
 import { CashFlowChart } from '../components/CashFlowChart'
 import { DailySpendChart } from '../components/DailySpendChart'
 import { MonthPaceChart } from '../components/MonthPaceChart'
@@ -22,7 +21,7 @@ import { PeriodNavigator } from '../components/PeriodNavigator'
 import { periodLabel, MONTH_NAMES, readPeriod, writePeriod, currentMonth } from '../lib/period'
 import { drillTo, type Measure } from '../lib/drill'
 import { BarRow } from '../components/BarRow'
-import { TAG, KIND_FIXED, KIND_VARIABLE, KIND_SAVINGS, KIND_DEBT, KIND_NONE, buildCategoryColors } from '../lib/chartColors'
+import { TAG, EXPENSE, KIND_FIXED, KIND_VARIABLE, KIND_SAVINGS, KIND_DEBT, KIND_NONE, buildCategoryColors } from '../lib/chartColors'
 import { getCategories } from '../api/categories'
 import { getNetWorthDue } from '../api/networth'
 import { NetWorthEntryDialog } from '../components/NetWorthEntryDialog'
@@ -44,9 +43,6 @@ const dkk = (n: number) =>
 export function DashboardPage() {
   const qc = useQueryClient()
   const navigate = useNavigate()
-  const { data: user } = useMe()
-  const { mutate: doLogout, isPending: loggingOut } = useLogout()
-
   const { data: accounts = [] } = useQuery({ queryKey: ['accounts'], queryFn: getBankAccounts })
 
 
@@ -96,7 +92,13 @@ export function DashboardPage() {
   const period: Period = readPeriod(search) ?? currentMonth()
   const setPeriod = (next: Period) => update((p) => writePeriod(p, next))
 
-  const { data: dashboard, isLoading: dashboardLoading } = useQuery({
+  const {
+    data: dashboard,
+    isLoading: dashboardLoading,
+    isError: dashboardFailed,
+    refetch: refetchDashboard,
+    isRefetching: dashboardRefetching,
+  } = useQuery({
     queryKey: ['dashboard', accountIdsParam, period],
     queryFn: () => getDashboard(accountIdsParam, period),
     enabled: !noneSelected,
@@ -109,14 +111,26 @@ export function DashboardPage() {
   // each month — which mean nothing over a single month; a month is for "how is this going", which
   // needs a baseline, the bills still to come and an honest estimate of where it ends.
   const isMonth = period.month !== null
-  const { data: outlook, isLoading: outlookLoading } = useQuery({
+  const {
+    data: outlook,
+    isLoading: outlookLoading,
+    isError: outlookFailed,
+    refetch: refetchOutlook,
+    isRefetching: outlookRefetching,
+  } = useQuery({
     queryKey: ['month-outlook', accountIdsParam, period],
     queryFn: () => getMonthOutlook(accountIdsParam, period),
     enabled: !noneSelected && isMonth,
     placeholderData: (prev) => prev,
   })
 
-  const { data: txPage, isLoading: txLoading } = useQuery({
+  const {
+    data: txPage,
+    isLoading: txLoading,
+    isError: txFailed,
+    refetch: refetchTx,
+    isRefetching: txRefetching,
+  } = useQuery({
     queryKey: ['transactions', 1, accountIdsParam, period, 'settled'],
     // includeFuture: false — scheduled payments are excluded from every figure on this page, so
     // listing them here would only invite the question of why they don't add up. They stay
@@ -165,6 +179,9 @@ export function DashboardPage() {
   // average and total coincide and the toggle is hidden.
   const monthDivisor = Math.max(1, dashboard?.monthsWithData ?? 1)
   const showAverage = categoryAmounts === 'average' && monthDivisor > 1
+
+  const typicalOpen = search.get('typical') === 'open'
+  const setTypicalOpen = (open: boolean) => update((p) => (open ? p.set('typical', 'open') : p.delete('typical')))
 
   const [markingTransfer, setMarkingTransfer] = useState<Transaction | null>(null)
 
@@ -229,54 +246,12 @@ export function DashboardPage() {
   const surplusPositive = (kpis?.avgMonthlySurplus ?? 0) >= 0
 
   return (
-    <div className="min-h-screen bg-[#0f1117] text-slate-200 px-4 py-6 md:px-8 md:py-8">
-      <div className="mx-auto max-w-6xl">
-        {/* Header */}
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="text-xl font-bold text-slate-50">🏦 Spiir</h1>
-            <p className="mt-0.5 text-xs text-slate-500">
-              {user?.email}
-              {accounts.length > 0 && <> &nbsp;·&nbsp; {accounts.length} account{accounts.length === 1 ? '' : 's'}</>}
-              {txPage && <> &nbsp;·&nbsp; {txPage.totalCount} transactions</>}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            {/* Sync, recategorize, duplicate-finding and rule clearing all live on the Accounts
-                page: they change the underlying data, whereas this page only reads it. */}
-            <Link
-              to="/budgets"
-              className="rounded-lg border border-slate-700 bg-[#1a1f2e] px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-[#232b3b] transition-colors"
-            >
-              Budgets
-            </Link>
-            <Link
-              to="/recurring"
-              className="rounded-lg border border-slate-700 bg-[#1a1f2e] px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-[#232b3b] transition-colors"
-            >
-              Recurring
-            </Link>
-            <Link
-              to="/networth"
-              className="rounded-lg border border-slate-700 bg-[#1a1f2e] px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-[#232b3b] transition-colors"
-            >
-              Net worth
-            </Link>
-            <Link
-              to="/accounts"
-              className="rounded-lg border border-slate-700 bg-[#1a1f2e] px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-[#232b3b] transition-colors"
-            >
-              Accounts
-            </Link>
-            <button
-              onClick={() => doLogout()}
-              disabled={loggingOut}
-              className="rounded-lg border border-slate-700 bg-[#1a1f2e] px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-[#232b3b] disabled:opacity-50 transition-colors"
-            >
-              Sign out
-            </button>
-          </div>
-        </div>
+    <div>
+      <div>
+        <PageHeader
+          title="Spending"
+          sub={txPage ? `${txPage.totalCount} transaction${txPage.totalCount === 1 ? '' : 's'} in ${label}` : label}
+        />
 
         {netWorthDue?.isDue && (
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-indigo-500/40 bg-indigo-500/10 px-4 py-3">
@@ -291,13 +266,13 @@ export function DashboardPage() {
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setRecordingNetWorth(true)}
-                className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700"
+                className={BUTTON_PRIMARY}
               >
                 Enter values
               </button>
               <Link
                 to="/networth"
-                className="rounded-lg border border-indigo-500/40 px-3 py-1.5 text-xs font-medium text-indigo-200 hover:bg-indigo-500/10"
+                className={BUTTON_SECONDARY}
               >
                 Open net worth
               </Link>
@@ -310,7 +285,6 @@ export function DashboardPage() {
           {/* No "All years" here: every figure on this page is per-period, and an unbounded
               range would make the monthly averages meaningless. */}
           <PeriodNavigator
-            dark
             period={period}
             onChange={(p) => p && setPeriod(p)}
             availableYears={yearOptions}
@@ -319,28 +293,31 @@ export function DashboardPage() {
 
         {/* Account filter */}
         {accounts.length > 0 && (
-          <div className="mb-6 flex flex-wrap items-center gap-2">
-            <span className="text-[0.7rem] uppercase tracking-wider text-slate-500 mr-1">Accounts</span>
+          <div className="mb-5 flex flex-wrap items-center gap-2" role="group" aria-label="Accounts included">
             <button
               onClick={() => setSelectedIds(null)}
-              className={`rounded-full px-3 py-1 text-xs font-medium border transition-colors ${
+              aria-pressed={allSelected}
+              className={`min-h-8 rounded-full border px-3 py-1 text-xs font-medium transition-colors pointer-coarse:min-h-9 ${
                 allSelected
-                  ? 'bg-indigo-500/20 border-indigo-500 text-indigo-300'
-                  : 'border-slate-700 text-slate-400 hover:bg-[#1a1f2e]'
+                  ? 'border-indigo-500 bg-indigo-500/20 text-indigo-200'
+                  : 'border-slate-700 text-slate-300 hover:bg-[#1a1f2e]'
               }`}
             >
-              All
+              All accounts
             </button>
             {accounts.map((a) => {
-              const active = effectiveSelected.includes(a.id)
+              // Under "All accounts" nothing is individually chosen, so no chip claims to be.
+              const active = !allSelected && effectiveSelected.includes(a.id)
               return (
                 <button
                   key={a.id}
                   onClick={() => toggleAccount(a.id)}
-                  className={`rounded-full px-3 py-1 text-xs font-medium border transition-colors ${
+                  aria-pressed={active}
+                  title={a.name}
+                  className={`min-h-8 max-w-[16rem] truncate rounded-full border px-3 py-1 text-xs font-medium transition-colors pointer-coarse:min-h-9 ${
                     active
-                      ? 'bg-[#1a1f2e] border-slate-600 text-slate-200'
-                      : 'border-slate-800 text-slate-600 hover:text-slate-400'
+                      ? 'border-indigo-500 bg-indigo-500/20 text-indigo-200'
+                      : 'border-slate-700 text-slate-300 hover:bg-[#1a1f2e]'
                   }`}
                 >
                   {a.name}
@@ -351,19 +328,24 @@ export function DashboardPage() {
         )}
 
         {noneSelected ? (
-          <div className="rounded-xl border border-slate-800 bg-[#1a1f2e] py-16 text-center">
-            <p className="text-slate-400">No accounts selected.</p>
-            <button onClick={() => setSelectedIds(null)} className="mt-2 text-sm text-indigo-400 hover:underline">
-              Select all accounts
-            </button>
-          </div>
+          <Panel title={label}>
+            <EmptyState title="No accounts selected">
+              <button onClick={() => setSelectedIds(null)} className={`${BUTTON_SECONDARY} mt-3`}>
+                Include all accounts
+              </button>
+            </EmptyState>
+          </Panel>
+        ) : dashboardFailed && !dashboard ? (
+          // Without this the panels below read their empty states, and a failed load told you
+          // that you had no transactions and should connect a bank.
+          <LoadError what="your spending" onRetry={() => refetchDashboard()} retrying={dashboardRefetching} />
         ) : (
           <>
             {/* A year: averages and the shape of each month. Per-month averages are meaningless
                 over a single month, where "average" is just that month, so a month gets its own
                 tiles below instead. */}
             {!isMonth && (
-            <div className="mb-5 grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
               <Kpi
                 label="Avg. monthly income"
                 value={dkk(kpis?.avgMonthlyIncome ?? 0)}
@@ -400,17 +382,20 @@ export function DashboardPage() {
                 it is likely to end. */}
             {isMonth && (
               <>
-                {outlookLoading || !outlook ? (
-                  <Section title={`🧭 ${label}`}>
+                {outlookFailed && !outlook ? (
+                  <LoadError what={`the outlook for ${label}`} onRetry={() => refetchOutlook()} retrying={outlookRefetching} />
+                ) : outlookLoading || !outlook ? (
+                  <Panel title={label}>
                     <Spinner />
-                  </Section>
+                  </Panel>
                 ) : (
                   <>
-                    <div className="mb-5 grid grid-cols-2 md:grid-cols-3 gap-3">
+                    <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
                       <Kpi
+                        prominent
                         label={outlook.isFinished ? 'Spent' : 'Spent so far'}
                         value={dkk(outlook.spentSoFar)}
-                        valueClass="text-red-400"
+                        valueClass={outlook.spentSoFar > 0 ? 'text-red-400' : 'text-slate-100'}
                         sub={
                           outlook.typical && outlook.isCurrent
                             ? `Typical by day ${outlook.elapsedDays}: ${dkk(outlook.typical.spendByNow)}`
@@ -430,10 +415,29 @@ export function DashboardPage() {
                           }
                         />
                       )}
+                      {outlook.isCurrent && outlook.balance && (
+                        <Kpi
+                          label="Expected balance, month end"
+                          value={outlook.balance.expectedEnd === null ? '—' : dkk(outlook.balance.expectedEnd)}
+                          valueClass={
+                            outlook.balance.expectedEnd === null
+                              ? 'text-slate-100'
+                              : outlook.balance.expectedEnd >= 0
+                                ? 'text-emerald-400'
+                                : 'text-red-400'
+                          }
+                          sub={
+                            outlook.balance.expectedEnd === null
+                              ? `Balance now ${dkk(outlook.balance.current)} · not enough history to estimate`
+                              : `Now ${dkk(outlook.balance.current)} + ${dkk(outlook.balance.incomeStillToCome ?? 0)} income − ${dkk(outlook.balance.billsStillToCome)} bills − ${dkk(outlook.balance.everydayStillToCome ?? 0)} everyday`
+                          }
+                          to={drill('Net balance', { scope: 'balance' }, 'net')}
+                        />
+                      )}
                       <Kpi
                         label="Everyday spending"
                         value={dkk(outlook.everydaySoFar)}
-                        valueClass="text-red-400"
+                        valueClass={outlook.everydaySoFar > 0 ? 'text-red-400' : 'text-slate-100'}
                         sub={(() => {
                           if (!outlook.typical || !outlook.isCurrent) return 'Everything except bills'
                           const diff = outlook.everydaySoFar - outlook.typical.everydayByNow
@@ -460,14 +464,16 @@ export function DashboardPage() {
                         />
                       )}
                       <Kpi
+                        wide={!outlook.isCurrent}
                         label={outlook.isFinished ? 'Income' : 'Income so far'}
                         value={dkk(outlook.incomeSoFar)}
-                        valueClass="text-emerald-400"
+                        valueClass={outlook.incomeSoFar > 0 ? 'text-emerald-400' : 'text-slate-100'}
                         sub={outlook.typical ? `Typical month: ${dkk(outlook.typical.income)}` : undefined}
                         to={drill('All income', { direction: 'income' }, 'inflow')}
                       />
                       {outlook.typical && (
                         <Kpi
+                          wide={!outlook.isCurrent}
                           label="Typical month"
                           value={dkk(outlook.typical.monthSpend)}
                           valueClass="text-slate-300"
@@ -477,14 +483,14 @@ export function DashboardPage() {
                     </div>
 
                     {!outlook.hasBaseline && (
-                      <p className="mb-5 text-xs text-slate-600">
+                      <p className="mb-5 text-xs text-slate-400">
                         There is no earlier month to compare this one with yet, so nothing here can be called
                         high or low.
                       </p>
                     )}
 
                     {(outlook.elapsedDays > 0 || outlook.typical) && (
-                      <Section title={`📈 Pace — ${label}`}>
+                      <Panel title={`Pace — ${label}`}>
                         <MonthPaceChart
                           cumulative={outlook.cumulative}
                           typical={outlook.typical?.cumulative ?? null}
@@ -492,13 +498,75 @@ export function DashboardPage() {
                           expectedEnd={outlook.expectedMonthEnd}
                         />
                         {outlook.typical && outlook.isCurrent && (
-                          <p className="mt-2 text-center text-[0.72rem] text-slate-500">
+                          <p className="mt-2 text-center text-xs text-slate-400">
                             Compared with the same point in each of the last {outlook.baselineMonths} month
                             {outlook.baselineMonths === 1 ? '' : 's'}, so a bill that always falls early in the
                             month doesn’t count against this one.
                           </p>
                         )}
-                      </Section>
+                      </Panel>
+                    )}
+
+                    {outlook.isCurrent && (
+                      <Panel
+                        title={`Still to come — ${label}`}
+                        action={
+                          outlook.billsPaid > 0 ? (
+                            <Link
+                              to={drill('Bills paid so far', { direction: 'expense', recurring: 'only' }, 'outflow')}
+                              className="text-xs text-sky-400 hover:underline"
+                            >
+                              {dkk(outlook.billsPaid)} of bills paid ›
+                            </Link>
+                          ) : undefined
+                        }
+                      >
+                        {outlook.stillToCome.items.length === 0 ? (
+                          <p className="py-4 text-center text-sm text-slate-400">
+                            No bills expected for the rest of the month.
+                          </p>
+                        ) : (
+                          <div className="space-y-1">
+                            {outlook.stillToCome.items.map((b, i) => (
+                              <div
+                                key={`${b.merchantKey}-${i}`}
+                                className="flex items-center gap-3 rounded py-2"
+                              >
+                                <span className="w-12 shrink-0 text-xs text-slate-400 tabular-nums">
+                                  {(() => {
+                                    // Split rather than parsed as a Date, which reads "2026-10-06" as UTC
+                                    // midnight and can land on the previous day west of Greenwich.
+                                    const [, mo, da] = b.expectedDate.split('-').map(Number)
+                                    return `${da} ${MONTH_NAMES[mo - 1]}`
+                                  })()}
+                                </span>
+                                <span className="min-w-0 flex-1 text-sm break-words text-slate-300">
+                                  {b.categoryEmoji ? `${b.categoryEmoji} ` : ''}
+                                  {b.displayName}
+                                  {b.overdue && (
+                                    <span
+                                      className="ml-2 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 align-middle text-xs font-medium text-amber-300"
+                                      title="Expected by now but not seen yet — banks often post a day or two late"
+                                    >
+                                      Late
+                                    </span>
+                                  )}
+                                </span>
+                                <span className="shrink-0 text-sm font-semibold tabular-nums text-slate-200">
+                                  {dkk(b.amount)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        <p className="mt-3 text-xs text-slate-400">
+                          Estimated from charges that repeat on a schedule.{' '}
+                          <Link to="/recurring" className="text-sky-400 hover:underline">
+                            Correct a wrong one on the Recurring page
+                          </Link>
+                          .
+                        </p>
+                      </Panel>
                     )}
 
                     {/* The typical month is an average, and an average can be wrong in two quiet
@@ -506,7 +574,18 @@ export function DashboardPage() {
                         savings and loan repayments count. Showing the months and what they are
                         made of lets either be seen rather than taken on trust. */}
                     {outlook.typical && (
-                      <Section title="🔍 What a typical month is made of">
+                      <details open={typicalOpen} className="mb-4 rounded-xl border border-[#232b3b] bg-[#1a1f2e] p-4 md:p-5">
+                        <summary
+                          onClick={(e) => {
+                            e.preventDefault()
+                            setTypicalOpen(!typicalOpen)
+                          }}
+                          className="cursor-pointer text-sm font-semibold text-slate-200"
+                        >
+                          What a typical month is made of
+                          <span className="ml-2 font-normal text-slate-400 tabular-nums">{dkk(outlook.typical.monthSpend)}</span>
+                        </summary>
+                        <div className="mt-3">
                         {(() => {
                           const typical = outlook.typical!
                           const maxSpend = Math.max(...typical.months.map((m) => m.spend), 1)
@@ -524,7 +603,7 @@ export function DashboardPage() {
 
                           return (
                             <>
-                              <div className="flex h-24 items-end gap-1" role="list" aria-label="Spending in each of the months averaged">
+                              <div className="flex h-16 items-end gap-1" role="list" aria-label="Spending in each of the months averaged">
                                 {typical.months.map((m) => (
                                   <Link
                                     key={`${m.year}-${m.month}`}
@@ -539,33 +618,32 @@ export function DashboardPage() {
                                     title={`${MONTH_NAMES[m.month - 1]} ${m.year}: ${dkk(m.spend)} — click to see the transactions`}
                                   >
                                     <div
-                                      className="w-full rounded-t bg-red-600"
-                                      style={{ height: `${(m.spend / maxSpend) * 100}%`, minHeight: m.spend > 0 ? 2 : 0 }}
+                                      className="w-full rounded-t"
+                                      style={{ height: `${(m.spend / maxSpend) * 100}%`, minHeight: m.spend > 0 ? 2 : 0, background: EXPENSE }}
                                     />
                                   </Link>
                                 ))}
                               </div>
                               <div className="mt-1 flex gap-1">
                                 {typical.months.map((m) => (
-                                  <div key={`l-${m.year}-${m.month}`} className="flex-1 text-center text-[0.6rem] text-slate-600">
+                                  <div key={`l-${m.year}-${m.month}`} className="flex-1 text-center text-xs text-slate-400">
                                     {MONTH_NAMES[m.month - 1].slice(0, 1)}
                                   </div>
                                 ))}
                               </div>
-                              <p className="mt-2 text-[0.72rem] text-slate-500">
+                              <p className="mt-2 text-xs text-slate-400">
                                 Total spending in each of the last {typical.months.length} month
                                 {typical.months.length === 1 ? '' : 's'} — tap one to open it. Highest:{' '}
                                 <span className="text-slate-300">
                                   {MONTH_NAMES[highest.month - 1]} {highest.year}, {dkk(highest.spend)}
                                 </span>
-                                .
                               </p>
 
                               <div className="mt-4 space-y-2">
                                 {kindRows.map((r) => (
                                   <BarRow
                                     key={r.key}
-                                    labelWidth="w-24"
+                                    labelWidth="sm:w-24"
                                     label={r.label}
                                     fraction={r.value / maxKind}
                                     amount={dkk(r.value)}
@@ -573,7 +651,7 @@ export function DashboardPage() {
                                   />
                                 ))}
                               </div>
-                              <p className="mt-3 text-[0.68rem] text-slate-600">
+                              <p className="mt-3 text-xs text-slate-400">
                                 A typical month is the middle one of these, {dkk(typical.monthSpend)}, so a single
                                 large one-off doesn’t pull it up. The average is {dkk(typical.averageMonthSpend)},
                                 and the split above is of the average. Both count everything that leaves your
@@ -583,69 +661,8 @@ export function DashboardPage() {
                             </>
                           )
                         })()}
-                      </Section>
-                    )}
-
-                    {outlook.isCurrent && (
-                      <Section
-                        title={`🗓️ Still to come — ${label}`}
-                        action={
-                          outlook.billsPaid > 0 ? (
-                            <Link
-                              to={drill('Bills paid so far', { direction: 'expense', recurring: 'only' }, 'outflow')}
-                              className="text-[0.7rem] text-sky-400 hover:underline"
-                            >
-                              {dkk(outlook.billsPaid)} of bills paid ›
-                            </Link>
-                          ) : undefined
-                        }
-                      >
-                        {outlook.stillToCome.items.length === 0 ? (
-                          <p className="py-4 text-center text-sm text-slate-600">
-                            No bills expected for the rest of the month.
-                          </p>
-                        ) : (
-                          <div className="space-y-1">
-                            {outlook.stillToCome.items.map((b, i) => (
-                              <div
-                                key={`${b.merchantKey}-${i}`}
-                                className="flex items-center gap-3 rounded px-2 py-2 hover:bg-white/[0.03]"
-                              >
-                                <span className="w-14 shrink-0 text-xs tabular-nums text-slate-500">
-                                  {(() => {
-                                    // Split rather than parsed as a Date, which reads "2026-10-06" as UTC
-                                    // midnight and can land on the previous day west of Greenwich.
-                                    const [, mo, da] = b.expectedDate.split('-').map(Number)
-                                    return `${da} ${MONTH_NAMES[mo - 1]}`
-                                  })()}
-                                </span>
-                                <span className="min-w-0 flex-1 truncate text-sm text-slate-300">
-                                  {b.categoryEmoji ? `${b.categoryEmoji} ` : ''}
-                                  {b.displayName}
-                                  {b.overdue && (
-                                    <span
-                                      className="ml-2 rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 align-middle text-[0.62rem] font-medium uppercase tracking-wide text-amber-400"
-                                      title="Expected by now but not seen yet — banks often post a day or two late"
-                                    >
-                                      Due
-                                    </span>
-                                  )}
-                                </span>
-                                <span className="shrink-0 text-sm font-semibold tabular-nums text-slate-200">
-                                  {dkk(b.amount)}
-                                </span>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                        <p className="mt-3 text-[0.68rem] text-slate-600">
-                          Estimated from charges that repeat on a schedule.{' '}
-                          <Link to="/recurring" className="text-sky-400 hover:underline">
-                            Correct a wrong one on the Recurring page
-                          </Link>
-                          .
-                        </p>
-                      </Section>
+                      </div>
+                      </details>
                     )}
                   </>
                 )}
@@ -654,7 +671,7 @@ export function DashboardPage() {
 
             {/* Daily burn — only over a single month, where "the 3rd" means one day. */}
             {period.month !== null && (dashboard?.dailySpending.length ?? 0) > 0 && (
-              <Section title={`🔥 Daily spending — ${label}`}>
+              <Panel title={`Daily spending — ${label}`}>
                 {dashboardLoading ? (
                   <Spinner />
                 ) : (
@@ -667,13 +684,13 @@ export function DashboardPage() {
                     }
                   />
                 )}
-              </Section>
+              </Panel>
             )}
 
             {/* Monthly flow — the shape of a year. Over one month it is a single bar. */}
             {!isMonth && (
-            <Section
-              title={`📅 Monthly cash flow — ${label}`}
+            <Panel
+              title={`Monthly cash flow — ${label}`}
               action={
                 <div className="flex rounded-lg border border-slate-700 p-0.5" role="group" aria-label="Cash flow view">
                   {(['chart', 'cards'] as const).map((v) => (
@@ -681,8 +698,8 @@ export function DashboardPage() {
                       key={v}
                       onClick={() => setFlowView(v)}
                       aria-pressed={flowView === v}
-                      className={`rounded-md px-2.5 py-1 text-xs font-medium capitalize transition-colors ${
-                        flowView === v ? 'bg-[#232b3b] text-slate-200' : 'text-slate-500 hover:text-slate-300'
+                      className={`min-h-7 rounded-md px-2.5 py-1 text-xs font-medium capitalize transition-colors ${
+                        flowView === v ? 'bg-[#232b3b] text-slate-200' : 'text-slate-400 hover:text-slate-300'
                       }`}
                     >
                       {v}
@@ -713,7 +730,7 @@ export function DashboardPage() {
                       net to the generic view, since no bar represents it. */}
                   {dashboard?.monthlyFlow.map((m) => (
                     <div key={`${m.year}-${m.month}`} className="rounded-lg border border-[#1e2535] bg-[#111620] px-2.5 py-3 text-center">
-                      <div className="text-[0.65rem] uppercase text-slate-600 mb-1.5">{MONTH_NAMES[m.month - 1]}</div>
+                      <div className="text-xs uppercase text-slate-400 mb-1.5">{MONTH_NAMES[m.month - 1]}</div>
                       <Link
                         to={monthFlowLink('income', m)}
                         className="block text-xs font-semibold text-emerald-400 hover:underline"
@@ -733,7 +750,7 @@ export function DashboardPage() {
                           'net',
                           { year: m.year, month: m.month },
                         )}
-                        className={`mt-1 block text-[0.7rem] font-semibold hover:underline ${m.net >= 0 ? 'text-emerald-400' : 'text-red-400'}`}
+                        className={`mt-1 block text-xs font-semibold hover:underline ${m.net >= 0 ? 'text-emerald-400' : 'text-red-400'}`}
                       >
                         {m.net >= 0 ? '+' : ''}
                         {Math.round(m.net).toLocaleString('da-DK')}
@@ -742,13 +759,13 @@ export function DashboardPage() {
                   ))}
                 </div>
               )}
-            </Section>
+            </Panel>
             )}
 
-            <div className={isMonth ? 'mb-5' : 'mb-5 grid grid-cols-1 lg:grid-cols-2 gap-4'}>
+            <div className={isMonth ? '' : 'grid grid-cols-1 gap-x-4 lg:grid-cols-2'}>
               {/* Category breakdown */}
-              <Section
-                title={`📊 Spending by category — ${label}`}
+              <Panel
+                title={`Spending by category — ${label}`}
                 action={
                   // Meaningless over a single month, where the average is the total.
                   monthDivisor > 1 ? (
@@ -762,8 +779,8 @@ export function DashboardPage() {
                           key={v}
                           onClick={() => setCategoryAmounts(v)}
                           aria-pressed={categoryAmounts === v}
-                          className={`rounded-md px-2.5 py-1 text-xs font-medium capitalize transition-colors ${
-                            categoryAmounts === v ? 'bg-[#232b3b] text-slate-200' : 'text-slate-500 hover:text-slate-300'
+                          className={`min-h-7 rounded-md px-2.5 py-1 text-xs font-medium capitalize transition-colors ${
+                            categoryAmounts === v ? 'bg-[#232b3b] text-slate-200' : 'text-slate-400 hover:text-slate-300'
                           }`}
                           title={
                             v === 'average'
@@ -781,7 +798,7 @@ export function DashboardPage() {
                 {dashboardLoading ? (
                   <Spinner />
                 ) : categoryRows.length === 0 ? (
-                  <p className="text-center text-sm text-slate-600 py-8">No categorized spending yet.</p>
+                  <p className="text-center text-sm text-slate-400 py-8">No categorized spending yet.</p>
                 ) : (
                   <>
                     <div className="space-y-2">
@@ -790,7 +807,7 @@ export function DashboardPage() {
                         return (
                           <BarRow
                             key={row.categoryId ?? 'none'}
-                            labelWidth="w-36"
+                            labelWidth="sm:w-36"
                             label={
                               <>
                                 {row.categoryEmoji && <span className="mr-1">{row.categoryEmoji}</span>}
@@ -805,7 +822,7 @@ export function DashboardPage() {
                             // Uncategorized has no identity to carry, so it takes the neutral
                             // grey used for "unfiled" throughout.
                             color={(row.categoryId && categoryColors.get(row.categoryId)) || KIND_NONE}
-                            meta="›"
+                            meta={<span aria-hidden>›</span>}
                             metaWidth="w-4"
                             to={
                               row.categoryId
@@ -818,7 +835,7 @@ export function DashboardPage() {
                       })}
                     </div>
                     {monthDivisor > 1 && (
-                      <p className="mt-3 text-[0.68rem] text-slate-600">
+                      <p className="mt-3 text-xs text-slate-400">
                         {showAverage
                           ? `Per month, averaged over the ${monthDivisor} month${monthDivisor === 1 ? '' : 's'} with spending.`
                           : `Total across ${label}.`}
@@ -826,11 +843,11 @@ export function DashboardPage() {
                     )}
                   </>
                 )}
-              </Section>
+              </Panel>
 
               {/* Structural balance — averages, so a year's question. */}
               {!isMonth && (
-              <Section title="💰 Structural monthly balance">
+              <Panel title="Structural monthly balance">
                 {dashboardLoading ? (
                   <Spinner />
                 ) : (
@@ -858,16 +875,16 @@ export function DashboardPage() {
                     </div>
                   </div>
                 )}
-              </Section>
+              </Panel>
               )}
             </div>
 
-            <div className="mb-5 grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <Section title={`🧭 Committed vs. discretionary — ${label}`}>
+            <div className="grid grid-cols-1 gap-x-4 lg:grid-cols-2">
+              <Panel title={`Committed vs. discretionary — ${label}`}>
                 {dashboardLoading ? (
                   <Spinner />
                 ) : kindTotal === 0 ? (
-                  <p className="py-8 text-center text-sm text-slate-600">No spending in this period.</p>
+                  <p className="py-8 text-center text-sm text-slate-400">No spending in this period.</p>
                 ) : (
                   <>
                     {/* One bar, one measure: the period's outgoings split by what kind of
@@ -882,7 +899,7 @@ export function DashboardPage() {
                           title={`${s.label}: ${dkk(s.value)} — click to see the transactions`}
                         >
                           {s.value / kindTotal > 0.11 && (
-                            <span className="text-[0.68rem] font-semibold text-white/95">
+                            <span className="text-xs font-semibold text-white/95">
                               {Math.round((s.value / kindTotal) * 100)}%
                             </span>
                           )}
@@ -901,7 +918,7 @@ export function DashboardPage() {
                           <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: s.color }} />
                           <dt className="flex-1 text-slate-400">{s.label}</dt>
                           <dd className="tabular-nums font-semibold text-slate-200">{dkk(s.value)}</dd>
-                          <dd className="w-10 text-right tabular-nums text-slate-600">
+                          <dd className="w-10 text-right tabular-nums text-slate-400">
                             {Math.round((s.value / kindTotal) * 100)}%
                           </dd>
                         </Link>
@@ -909,22 +926,22 @@ export function DashboardPage() {
                     </dl>
                   </>
                 )}
-              </Section>
+              </Panel>
 
-              <Section title={`🏷️ Tags — ${label}`}>
+              <Panel title={`Tags — ${label}`}>
                 {dashboardLoading ? (
                   <Spinner />
                 ) : tagRows.length === 0 ? (
-                  <p className="px-1 py-8 text-center text-sm text-slate-600">
-                    No tags yet. Hover a transaction and use <span className="text-slate-400">+ tag</span> to label it
-                    — “Padel”, “Føtex”, “Clara” — and its total shows up here.
+                  <p className="px-1 py-8 text-center text-sm text-slate-400">
+                    No tags yet. Use <span className="text-slate-200">+ tag</span> on a transaction to label it — “Padel”,
+                    “Føtex”, “Clara” — and its total shows up here.
                   </p>
                 ) : (
                   <div className="space-y-2">
                     {tagRows.slice(0, 9).map((tag) => (
                       <BarRow
                         key={tag.tagId}
-                        labelWidth="w-28"
+                        labelWidth="sm:w-28"
                         label={tag.name}
                         fraction={tag.total / maxTag}
                         amount={dkk(tag.total)}
@@ -937,19 +954,19 @@ export function DashboardPage() {
                     ))}
                   </div>
                 )}
-              </Section>
+              </Panel>
             </div>
 
             {/* Transactions */}
-            <Section
-              title="📋 Transactions"
+            <Panel
+              title="Transactions"
               // Transfers stay listed but marked; scheduled payments aren't listed here at all,
               // so the wording distinguishes them rather than lumping both under "not counted".
               // Both counts open the rows they describe — a figure saying what was left out is
               // no use unless you can see what that was.
               action={
                 (dashboard?.excludedTransfers || dashboard?.excludedFuture) ? (
-                  <div className="flex flex-wrap items-center gap-3 text-[0.7rem]">
+                  <div className="flex flex-wrap items-center gap-3 text-xs">
                     {dashboard.excludedTransfers > 0 && (
                       <Link
                         to={drill('Internal transfers', { scope: 'transfers' }, 'net')}
@@ -970,90 +987,57 @@ export function DashboardPage() {
                 ) : undefined
               }
             >
-              {txLoading ? (
+              {txFailed && !txPage ? (
+                <LoadError what="your transactions" onRetry={() => refetchTx()} retrying={txRefetching} />
+              ) : txLoading ? (
                 <Spinner />
               ) : txPage && txPage.items.length > 0 ? (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="text-left text-[0.68rem] uppercase tracking-wider text-slate-600 border-b border-[#232b3b]">
-                        <th className="py-2 pr-3 font-medium">Date</th>
-                        <th className="py-2 pr-3 font-medium">Description</th>
-                        <th className="py-2 pr-3 font-medium">Account</th>
-                        <th className="py-2 pr-3 font-medium">Category</th>
-                        <th className="py-2 pl-3 font-medium text-right">Amount</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {txPage.items.map((tx) => (
-                        <tr
-                          key={tx.id}
-                          className={`group/row border-b border-[#1e2535] last:border-none hover:bg-white/[0.02] ${tx.isFuture || tx.isTransfer ? 'opacity-60' : ''}`}
-                        >
-                          <td className="py-2 pr-3 whitespace-nowrap text-slate-500">{tx.bookingDate}</td>
-                          <td className="py-2 pr-3 text-slate-300">
-                            {tx.description}
-                            {tx.isFuture && (
-                              <span
-                                className="ml-2 rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 align-middle text-[0.62rem] font-medium uppercase tracking-wide text-amber-400"
-                                title="Scheduled by the bank for a future date — not counted in any total"
-                              >
-                                Scheduled
-                              </span>
-                            )}
-                            {tx.isTransfer && (
-                              <button
-                                onClick={() => tx.isManualTransfer && unmarkTransfer(tx.id)}
-                                disabled={!tx.isManualTransfer}
-                                className="ml-2 rounded-full border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 align-middle text-[0.62rem] font-medium uppercase tracking-wide text-sky-400 enabled:hover:bg-sky-500/20"
-                                title={
-                                  tx.isManualTransfer
-                                    ? 'Marked as a transfer by you — click to undo'
-                                    : 'Matched against the opposite leg in another of your accounts — not counted as income or spending'
-                                }
-                              >
-                                Transfer{tx.isManualTransfer ? ' ✕' : ''}
-                              </button>
-                            )}
-                            {!tx.isTransfer && (
-                              <button
-                                onClick={() => setMarkingTransfer(tx)}
-                                className="ml-2 align-middle text-[0.62rem] text-slate-700 opacity-0 transition-opacity hover:text-sky-400 group-hover/row:opacity-100"
-                                title="Mark as an internal transfer, so it's left out of income and spending"
-                              >
-                                ⇄
-                              </button>
-                            )}
-                            <div className="mt-1">
-                              <TagEditor dark transactionId={tx.id} tags={tx.tags} />
-                            </div>
-                          </td>
-                          <td className="py-2 pr-3 whitespace-nowrap text-slate-500">{accountNameById.get(tx.bankAccountId) ?? '—'}</td>
-                          <td className="py-2 pr-3">
-                            <CategoryPicker
-                              dark
-                              transactionId={tx.id}
-                              categoryId={tx.categoryId}
-                              categoryName={tx.categoryName}
-                              categoryEmoji={tx.categoryEmoji}
-                            />
-                          </td>
-                          <td className={`py-2 pl-3 text-right font-semibold tabular-nums ${tx.amount < 0 ? 'text-red-400' : 'text-emerald-400'}`}>
-                            {tx.amount.toLocaleString('da-DK', { style: 'currency', currency: tx.currency })}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <>
+                  <TransactionList
+                    items={txPage.items}
+                    accountNameById={accountNameById}
+                    dimmed={(tx) => tx.isFuture || tx.isTransfer}
+                    flags={(tx) => (
+                      <>
+                        {tx.isFuture && <ScheduledBadge />}
+                        {tx.isTransfer ? (
+                          <TransferBadge onUndo={tx.isManualTransfer ? () => unmarkTransfer(tx.id) : undefined} />
+                        ) : (
+                          <button
+                            onClick={() => setMarkingTransfer(tx)}
+                            className={`rounded-full px-2 py-0.5 text-xs text-slate-400 hover:text-sky-300 ${REVEAL_ON_ROW_HOVER}`}
+                            title="Mark as an internal transfer, so it's left out of income and spending"
+                          >
+                            Mark transfer
+                          </button>
+                        )}
+                      </>
+                    )}
+                  />
+                  {/* The page lists the first 50. Saying so, with the way to the rest, is what
+                      stops the list being mistaken for all of them. */}
+                  {txPage.totalCount > txPage.items.length && (
+                    <p className="mt-3 text-center text-sm text-slate-400">
+                      Showing the latest {txPage.items.length} of {txPage.totalCount}.{' '}
+                      <Link to={drill(`All transactions, ${label}`, {}, 'net')} className="text-sky-300 hover:underline">
+                        See all
+                      </Link>
+                    </p>
+                  )}
+                </>
+              ) : accounts.length === 0 ? (
+                <EmptyState title="No transactions yet">
+                  <p>Connect a bank account to start tracking.</p>
+                  <Link to="/accounts/connect" className={`${BUTTON_PRIMARY} mt-3`}>
+                    Connect a bank
+                  </Link>
+                </EmptyState>
               ) : (
-                <div className="flex flex-col items-center justify-center py-14 text-center">
-                  <div className="text-3xl mb-2">🏦</div>
-                  <p className="text-slate-400 font-medium">No transactions yet</p>
-                  <p className="mt-1 text-sm text-slate-600">Connect a bank account to start syncing transactions.</p>
-                </div>
+                <EmptyState title={`No transactions in ${label}`}>
+                  Choose another month, or sync your accounts from the Accounts page.
+                </EmptyState>
               )}
-            </Section>
+            </Panel>
           </>
         )}
 
@@ -1078,57 +1062,6 @@ export function DashboardPage() {
   )
 }
 
-// `to` makes the figure openable — every calculated number on this page has one, so any total
-// can be counted rather than taken on trust.
-function Kpi({
-  label,
-  value,
-  valueClass,
-  sub,
-  loading,
-  to,
-}: {
-  label: string
-  value: string
-  valueClass: string
-  sub?: string
-  loading?: boolean
-  to?: string
-}) {
-  const body = (
-    <>
-      <div className="text-[0.68rem] uppercase tracking-wider text-slate-600 mb-1.5">{label}</div>
-      <div className={`text-xl font-bold tabular-nums ${valueClass}`}>{loading ? '—' : value}</div>
-      {sub && <div className="mt-1 text-[0.68rem] text-slate-600">{sub}</div>}
-    </>
-  )
-  const base = 'block rounded-xl border border-[#232b3b] bg-[#1a1f2e] px-4 py-3.5'
-
-  return to ? (
-    <Link
-      to={to}
-      className={`${base} transition-colors hover:border-slate-600 hover:bg-[#1e2433] focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500`}
-      title={`Show the transactions behind ${label.toLowerCase()}`}
-    >
-      {body}
-    </Link>
-  ) : (
-    <div className={base}>{body}</div>
-  )
-}
-
-function Section({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
-  return (
-    <div className="mb-5 rounded-xl border border-[#232b3b] bg-[#1a1f2e] p-4 md:p-5">
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <div className="text-[0.7rem] font-bold uppercase tracking-wider text-slate-600">{title}</div>
-        {action}
-      </div>
-      {children}
-    </div>
-  )
-}
-
 function FlowRow({
   label,
   value,
@@ -1142,7 +1075,7 @@ function FlowRow({
   bold?: boolean
   to?: string
 }) {
-  const cls = `flex justify-between py-0.5 ${bold ? 'font-bold text-[0.9rem]' : 'text-slate-400'}`
+  const cls = `flex justify-between py-0.5 ${bold ? 'font-bold text-xs' : 'text-slate-400'}`
   const body = (
     <>
       <span>{label}</span>
@@ -1159,10 +1092,3 @@ function FlowRow({
   )
 }
 
-function Spinner() {
-  return (
-    <div className="flex justify-center py-8">
-      <div className="h-6 w-6 animate-spin rounded-full border-4 border-indigo-500 border-t-transparent" />
-    </div>
-  )
-}

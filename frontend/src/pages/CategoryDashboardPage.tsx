@@ -3,9 +3,10 @@ import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { getTransactionsByCategory, type Period, type TransactionQuery } from '../api/transactions'
 import { getBankAccounts } from '../api/accounts'
 import { getCategories } from '../api/categories'
-import { CategoryPicker } from '../components/CategoryPicker'
-import { TagEditor } from '../components/TagEditor'
-import { readPeriod, currentMonth, periodLabel, MONTH_NAMES } from '../lib/period'
+import { MonthBars } from '../components/MonthBars'
+import { TransactionList } from '../components/TransactionList'
+import { EmptyState, Kpi, LoadError, PageHeader, Panel, Spinner } from '../components/ui'
+import { readPeriod, currentMonth, periodLabel } from '../lib/period'
 import { drillTo, dashboardLink } from '../lib/drill'
 import { BarRow } from '../components/BarRow'
 import { INCOME, NEUTRAL, SURFACE, KIND_NONE, buildCategoryColors } from '../lib/chartColors'
@@ -30,7 +31,7 @@ export function CategoryDashboardPage() {
   const { data: categories = [] } = useQuery({ queryKey: ['categories'], queryFn: getCategories })
   const accountNameById = new Map(accounts.map((a) => [a.id, a.name]))
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch, isRefetching } = useQuery({
     queryKey: ['by-category', categoryId, accountIds, period],
     queryFn: () => getTransactionsByCategory(categoryId, accountIds, period),
   })
@@ -41,7 +42,7 @@ export function CategoryDashboardPage() {
   const accent = (categoryId && categoryColors.get(categoryId)) || KIND_NONE
 
   const category = categories.find((c) => c.id === categoryId)
-  const title = categoryId === null ? '— Uncategorized' : `${category?.emoji ?? ''} ${category?.name ?? 'Category'}`.trim()
+  const title = categoryId === null ? 'Uncategorized' : `${category?.emoji ?? ''} ${category?.name ?? 'Category'}`.trim()
 
   // Preserve the dashboard's filters when going back, so the user returns to the view they left.
   const backTo = dashboardLink(accountIds, period)
@@ -57,49 +58,49 @@ export function CategoryDashboardPage() {
 
   // Scaled on magnitude, not value: a month or merchant that nets negative (refunds outweighing
   // charges) still needs a bar proportional to how much moved, drawn in the refund colour.
-  const maxMonth = Math.max(...(data?.monthlyTotals.map((m) => Math.abs(m.total)) ?? [0]), 1)
   const maxMerchant = Math.max(...(data?.merchants.map((m) => Math.abs(m.total)) ?? [0]), 1)
   const maxChild = Math.max(...(data?.childBreakdown.map((c) => Math.abs(c.total)) ?? [0]), 1)
   const recurringShare = data && data.total > 0 ? data.stats.recurringTotal / data.total : 0
 
   return (
-    <div className="min-h-screen bg-[#0f1117] px-4 py-6 text-slate-200 md:px-8 md:py-8">
-      <div className="mx-auto max-w-5xl">
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <Link to={backTo} className="text-xs text-slate-500 hover:text-slate-300">← Dashboard</Link>
-            <h1 className="mt-1 text-xl font-bold text-slate-50">{title}</h1>
-            <p className="mt-0.5 text-xs text-slate-500">
+    <div>
+      <div>
+        <PageHeader
+          title={title}
+          back={{ to: backTo, label: 'Spending' }}
+          sub={
+            <>
               {label}
-              {accountIds.length > 0 && <> &nbsp;·&nbsp; {accountIds.length} of {accounts.length} accounts</>}
-            </p>
-          </div>
-          {data && (
-            <div className="text-right">
-              <div className={`text-2xl font-bold tabular-nums ${data.total >= 0 ? 'text-red-400' : 'text-emerald-400'}`}>
-                {kr(data.total)}
-              </div>
-              {data.refundTotal > 0 && (
-                <div className="mt-0.5 text-[0.68rem] text-slate-500">
-                  {kr(data.spendTotal)} spent − {kr(data.refundTotal)} refunded
+              {accountIds.length > 0 && <> · {accountIds.length} of {accounts.length} accounts</>}
+            </>
+          }
+          aside={
+            data && (
+              <div className="text-right">
+                <div className={`text-2xl font-bold tabular-nums ${data.total >= 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+                  {kr(data.total)}
                 </div>
-              )}
-            </div>
-          )}
-        </div>
+                {data.refundTotal > 0 && (
+                  <div className="mt-0.5 text-xs text-slate-400">
+                    {kr(data.spendTotal)} spent − {kr(data.refundTotal)} refunded
+                  </div>
+                )}
+              </div>
+            )
+          }
+        />
 
         {isLoading ? (
-          <div className="flex justify-center py-16">
-            <div className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-500 border-t-transparent" />
-          </div>
+          <Spinner large />
+        ) : isError && !data ? (
+          <LoadError what="this category" onRetry={() => refetch()} retrying={isRefetching} />
         ) : !data || data.stats.transactionCount === 0 ? (
-          <div className="rounded-xl border border-[#232b3b] bg-[#1a1f2e] py-16 text-center">
-            <div className="mb-2 text-3xl">🗂️</div>
-            <p className="text-slate-400">Nothing spent in this category for {label}.</p>
-          </div>
+          <Panel title={label}>
+            <EmptyState title={`Nothing spent in this category for ${label}`} />
+          </Panel>
         ) : (
           <>
-            <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-4">
+            <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
               <Kpi label="Per month" value={kr(data.stats.averagePerMonth)} sub={`over ${data.stats.monthsWithData} month${data.stats.monthsWithData === 1 ? '' : 's'} with activity`} />
               <Kpi label="Share of all spending" value={`${(data.stats.shareOfSpending * 100).toFixed(1)}%`} />
               <Kpi
@@ -117,14 +118,14 @@ export function CategoryDashboardPage() {
             {/* Recurring vs one-off: the most actionable split in a category — standing costs are
                 what you can renegotiate or cancel, one-offs mostly aren't. */}
             {recurringShare > 0 && (
-              <Panel title="🔁 Recurring vs one-off">
+              <Panel title="Recurring vs one-off">
                 {/* Segments are rendered only when they have width. At 100% recurring, a
                     flex-1 sibling would still claim a sliver and imply a one-off share that
                     isn't there. */}
                 <div className="flex h-6 overflow-hidden rounded">
                   {recurringShare > 0 && (
                     <div
-                      className="flex items-center justify-center text-[0.65rem] font-semibold text-white/95"
+                      className="flex items-center justify-center text-xs font-semibold text-white/95"
                       style={{ width: `${recurringShare * 100}%`, background: accent }}
                     >
                       {recurringShare > 0.12 && `${Math.round(recurringShare * 100)}%`}
@@ -133,7 +134,7 @@ export function CategoryDashboardPage() {
                   {recurringShare > 0 && recurringShare < 1 && <div className="w-0.5 shrink-0" style={{ background: SURFACE }} />}
                   {recurringShare < 1 && (
                     <div
-                      className="flex items-center justify-center text-[0.65rem] font-semibold text-white/95"
+                      className="flex items-center justify-center text-xs font-semibold text-white/95"
                       style={{ width: `${(1 - recurringShare) * 100}%`, background: NEUTRAL }}
                     >
                       {1 - recurringShare > 0.12 && `${Math.round((1 - recurringShare) * 100)}%`}
@@ -150,53 +151,31 @@ export function CategoryDashboardPage() {
                     One-off {kr(data.total - data.stats.recurringTotal)}
                   </span>
                 </div>
-                <p className="mt-2 text-center text-[0.68rem] text-slate-600">
+                <p className="mt-2 text-center text-xs text-slate-400">
                   Recurring = seen in most months of this period. Useful for spotting standing costs.
                 </p>
               </Panel>
             )}
 
             {data.monthlyTotals.length > 1 && (
-              <Panel title={`📅 Spend per month — ${label}`}>
+              <Panel title={`Spend per month — ${label}`}>
                 {/* Plot area and labels are separate rows sharing the same flex layout. The plot
                     row carries a definite height so the bars' percentage heights have something
                     to resolve against — nesting them under an items-end container sizes each
                     column to its content instead, and the percentages silently collapse. */}
-                <div className="flex items-stretch gap-1.5" style={{ height: 132 }}>
-                  {data.monthlyTotals.map((m) => (
-                    <div
-                      key={`${m.year}-${m.month}`}
-                      className="group relative flex h-full flex-1 flex-col justify-end"
-                      title={`${MONTH_NAMES[m.month - 1]}: ${kr(m.total)}`}
-                    >
-                      <span className="absolute inset-x-0 -top-1 text-center text-[0.6rem] tabular-nums text-slate-400 opacity-0 transition-opacity group-hover:opacity-100">
-                        {m.total > 0 ? Math.round(m.total).toLocaleString('da-DK') : ''}
-                      </span>
-                      <div
-                        className="w-full rounded-t"
-                        style={{
-                          height: `${(Math.abs(m.total) / maxMonth) * 100}%`,
-                          minHeight: m.total !== 0 ? 2 : 0,
-                          background: m.total < 0 ? INCOME : accent,
-                        }}
-                      />
-                    </div>
-                  ))}
-                </div>
-                <div className="mt-1.5 flex gap-1.5">
-                  {data.monthlyTotals.map((m) => (
-                    <div key={`l-${m.year}-${m.month}`} className="flex-1 text-center text-[0.6rem] text-slate-600">
-                      {MONTH_NAMES[m.month - 1]}
-                    </div>
-                  ))}
-                </div>
+                <MonthBars
+                  data={data.monthlyTotals.map((m) => ({ year: m.year, month: m.month, value: m.total }))}
+                  colorOf={(b) => (b.value < 0 ? INCOME : accent)}
+                  format={kr}
+                  height="h-32"
+                />
               </Panel>
             )}
 
             {/* A breakdown into one part says nothing the total didn't already — and the
                 merchant panel below is the more useful split at that point. */}
             {data.childBreakdown.length > 1 && (
-              <Panel title="🗂️ Broken down">
+              <Panel title="Broken down">
                 <div className="space-y-1.5">
                   {data.childBreakdown.map((child) => (
                     <BarRow
@@ -214,7 +193,7 @@ export function CategoryDashboardPage() {
                       amount={kr(child.total)}
                       color={child.total < 0 ? INCOME : accent}
                       meta={`${child.count}×`}
-                      metaWidth="w-16"
+                      metaWidth="w-12"
                       to={child.categoryId ? `/spending/${child.categoryId}?${search.toString()}` : undefined}
                       title={child.categoryId ? `Open the ${child.name} breakdown` : 'Filed on the group itself'}
                     />
@@ -223,7 +202,7 @@ export function CategoryDashboardPage() {
               </Panel>
             )}
 
-            <Panel title="🏬 Where it goes">
+            <Panel title="Where it goes">
               <div className="space-y-1.5">
                 {data.merchants.slice(0, 12).map((m) => (
                   <BarRow
@@ -232,7 +211,7 @@ export function CategoryDashboardPage() {
                       <>
                         {m.merchant}
                         {m.isRecurring && (
-                          <span className="ml-1 text-[0.6rem] text-amber-500" title="Appears in most months of this period">🔁</span>
+                          <span className="ml-1 text-xs text-amber-500" title="Appears in most months of this period">🔁</span>
                         )}
                       </>
                     }
@@ -253,13 +232,13 @@ export function CategoryDashboardPage() {
                   />
                 ))}
                 {data.merchants.length > 12 && (
-                  <p className="pt-1 text-center text-xs text-slate-600">…and {data.merchants.length - 12} more</p>
+                  <p className="pt-1 text-center text-xs text-slate-400">…and {data.merchants.length - 12} more</p>
                 )}
               </div>
             </Panel>
 
             {data.byAccount.length > 1 && (
-              <Panel title="🏦 By account">
+              <Panel title="By account">
                 <div className="flex flex-wrap gap-2">
                   {data.byAccount.map((a) => (
                     <Link
@@ -267,9 +246,9 @@ export function CategoryDashboardPage() {
                       to={drill(accountNameById.get(a.bankAccountId) ?? 'Account', { categoryId: categoryId ?? undefined, uncategorized: categoryId === null }, [a.bankAccountId])}
                       className="rounded-lg border border-[#1e2535] bg-[#111620] px-3 py-2 hover:border-slate-600"
                     >
-                      <div className="text-[0.68rem] text-slate-500">{accountNameById.get(a.bankAccountId) ?? 'Unknown account'}</div>
+                      <div className="text-xs text-slate-400">{accountNameById.get(a.bankAccountId) ?? 'Unknown account'}</div>
                       <div className="mt-0.5 text-sm font-semibold tabular-nums text-slate-200">{kr(a.total)}</div>
-                      <div className="text-[0.62rem] text-slate-600">{a.count} transactions</div>
+                      <div className="text-xs text-slate-400">{a.count} transactions</div>
                     </Link>
                   ))}
                 </div>
@@ -277,10 +256,9 @@ export function CategoryDashboardPage() {
             )}
 
             {data.tagBreakdown.length > 0 && (
-              <Panel title="🏷️ By tag">
-                <p className="mb-2.5 text-xs text-slate-600">
-                  Tags cut across categories, and one transaction can carry several — so these
-                  won't add up to {kr(data.total)}.
+              <Panel title="By tag">
+                <p className="mb-2.5 text-xs text-slate-400">
+                  Tags cut across categories, and one transaction can carry several, so these won't add up to the total.
                 </p>
                 <div className="flex flex-wrap gap-2">
                   {data.tagBreakdown.map((tag) => (
@@ -289,78 +267,21 @@ export function CategoryDashboardPage() {
                       to={drill(tag.name, { tagId: tag.tagId, categoryId: categoryId ?? undefined, uncategorized: categoryId === null })}
                       className="rounded-lg border border-violet-500/25 bg-violet-500/10 px-3 py-2 hover:border-violet-400/50"
                     >
-                      <div className="text-[0.68rem] font-medium text-violet-300">{tag.name}</div>
+                      <div className="text-xs font-medium text-violet-300">{tag.name}</div>
                       <div className="mt-0.5 text-sm font-semibold tabular-nums text-slate-200">{kr(tag.total)}</div>
-                      <div className="text-[0.62rem] text-slate-500">{tag.count} transactions</div>
+                      <div className="text-xs text-slate-400">{tag.count} transactions</div>
                     </Link>
                   ))}
                 </div>
               </Panel>
             )}
 
-            <Panel title="📋 Transactions">
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-[#232b3b] text-left text-[0.68rem] uppercase tracking-wider text-slate-600">
-                      <th className="py-2 pr-3 font-medium">Date</th>
-                      <th className="py-2 pr-3 font-medium">Description</th>
-                      <th className="py-2 pr-3 font-medium">Account</th>
-                      <th className="py-2 pr-3 font-medium">Category</th>
-                      <th className="py-2 pl-3 text-right font-medium">Amount</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.items.map((tx) => (
-                      <tr key={tx.id} className="group/row border-b border-[#1e2535] last:border-none hover:bg-white/[0.02]">
-                        <td className="py-2 pr-3 whitespace-nowrap text-slate-500">{tx.bookingDate}</td>
-                        <td className="py-2 pr-3 text-slate-300">
-                          {tx.description}
-                          <div className="mt-1">
-                            <TagEditor dark transactionId={tx.id} tags={tx.tags} />
-                          </div>
-                        </td>
-                        <td className="py-2 pr-3 whitespace-nowrap text-slate-500">{accountNameById.get(tx.bankAccountId) ?? '—'}</td>
-                        <td className="py-2 pr-3">
-                          <CategoryPicker
-                            dark
-                            transactionId={tx.id}
-                            categoryId={tx.categoryId}
-                            categoryName={tx.categoryName}
-                            categoryEmoji={tx.categoryEmoji}
-                          />
-                        </td>
-                        <td className={`py-2 pl-3 text-right font-semibold tabular-nums ${tx.amount < 0 ? 'text-red-400' : 'text-emerald-400'}`}>
-                          {tx.amount.toLocaleString('da-DK', { style: 'currency', currency: tx.currency })}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+            <Panel title="Transactions">
+              <TransactionList items={data.items} accountNameById={accountNameById} />
             </Panel>
           </>
         )}
       </div>
-    </div>
-  )
-}
-
-function Kpi({ label, value, sub }: { label: string; value: string; sub?: string }) {
-  return (
-    <div className="rounded-xl border border-[#232b3b] bg-[#1a1f2e] px-4 py-3.5">
-      <div className="mb-1.5 text-[0.68rem] uppercase tracking-wider text-slate-600">{label}</div>
-      <div className="text-xl font-bold tabular-nums text-slate-100">{value}</div>
-      {sub && <div className="mt-1 text-[0.68rem] text-slate-600">{sub}</div>}
-    </div>
-  )
-}
-
-function Panel({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="mb-5 rounded-xl border border-[#232b3b] bg-[#1a1f2e] p-4 md:p-5">
-      <div className="mb-4 text-[0.7rem] font-bold uppercase tracking-wider text-slate-600">{title}</div>
-      {children}
     </div>
   )
 }

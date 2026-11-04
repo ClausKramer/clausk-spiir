@@ -153,14 +153,80 @@ for (const { y, m, back } of monthsToCheck) {
   }
 }
 
-console.log('\nAccount filter')
+console.log('\nA single account')
 const accounts = get('/accounts')
 if (accounts.length > 1) {
-  const one = accounts[0].id
-  const { y, m } = monthsToCheck[1]
-  const o = get(`/month/outlook?year=${y}&month=${m}&accountIds=${one}`)
-  const q = get(`/transactions/query?year=${y}&month=${m}&direction=expense&accountIds=${one}`)
-  check('the outlook honours the account filter', near(o.spentSoFar, q.outflow), `${o.spentSoFar} vs ${q.outflow}`)
+  // The most recent finished month that actually has transactions: against an empty month every
+  // one of these comparisons is 0 = 0 and proves nothing.
+  // Preferably one with transfers between the accounts — that is the case this section is about —
+  // otherwise the most recent with any data.
+  const pick = (needsTransfers) => {
+    for (let back = 1; back <= 12; back++) {
+      const d = new Date(today.getFullYear(), today.getMonth() - back, 1)
+      const c = { y: d.getFullYear(), m: d.getMonth() + 1 }
+      const scope = needsTransfers ? '&scope=transfers' : ''
+      if (get(`/transactions/query?year=${c.y}&month=${c.m}${scope}`).count > 0) return c
+    }
+    return null
+  }
+  const withTransfers = pick(true)
+  const found = withTransfers ?? pick(false)
+  const { y, m } = found ?? monthsToCheck[1]
+  console.log(
+    `  (using ${y}-${String(m).padStart(2, '0')}` +
+      (withTransfers ? ', which has transfers between accounts)' : found ? ' — no month with transfers, so the transfer case is not exercised)' : ' — no data found, so these are vacuous)'),
+  )
+  for (const a of accounts) {
+    const o = get(`/month/outlook?year=${y}&month=${m}&accountIds=${a.id}`)
+    const q = get(`/transactions/query?year=${y}&month=${m}&direction=expense&accountIds=${a.id}`)
+    check(`${a.name}: the outlook honours the account filter`, near(o.spentSoFar, q.outflow), `${o.spentSoFar} vs ${q.outflow}`)
+
+    // Looking at one account, a transfer to or from another is real money in or out of it: a
+    // budget account fed by a transfer on payday has income, not none. So with one account
+    // selected nothing nets out, and its income and spending are simply the sum of its own
+    // settled rows — read here from the account's own transaction list, a path that knows
+    // nothing about transfers, so this cannot agree with the outlook by sharing its mistake.
+    const rows = get(
+      `/transactions?accountIds=${a.id}&year=${y}&month=${m}&page=1&pageSize=200&includeFuture=false`,
+    ).items
+    const ownIncome = sum(rows.filter((t) => t.amount > 0).map((t) => t.amount))
+    const ownSpend = sum(rows.filter((t) => t.amount < 0).map((t) => -t.amount))
+    check(`${a.name}: income is everything that came in`, near(o.incomeSoFar, ownIncome), `${o.incomeSoFar} vs ${ownIncome}`)
+    check(`${a.name}: spending is everything that went out`, near(o.spentSoFar, ownSpend), `${o.spentSoFar} vs ${ownSpend}`)
+  }
+
+  // And across every account the same transfers do net out, so a transfer can't be both income
+  // for the account that received it and spending for the one that sent it in the same total.
+  const all = get(`/month/outlook?year=${y}&month=${m}`)
+  const parts = accounts.map((a) => get(`/month/outlook?year=${y}&month=${m}&accountIds=${a.id}`))
+  const sumIncome = sum(parts.map((p) => p.incomeSoFar))
+  const sumSpend = sum(parts.map((p) => p.spentSoFar))
+  check('income summed over accounts is at least the all-account income', sumIncome >= all.incomeSoFar - 0.01)
+  check(
+    'the surplus is the same either way (transfers add equally to both sides)',
+    near(sumIncome - sumSpend, all.incomeSoFar - all.spentSoFar),
+    `${sumIncome - sumSpend} vs ${all.incomeSoFar - all.spentSoFar}`,
+  )
+
+  console.log('Expected balance')
+  const now = get(`/month/outlook?year=${monthsToCheck[0].y}&month=${monthsToCheck[0].m}`)
+  for (const a of [null, ...accounts]) {
+    const filter = a ? `&accountIds=${a.id}` : ''
+    const label = a ? a.name : 'all accounts'
+    const o = get(`/month/outlook?year=${monthsToCheck[0].y}&month=${monthsToCheck[0].m}${filter}`)
+    const dash = get(`/transactions/dashboard?year=${monthsToCheck[0].y}&month=${monthsToCheck[0].m}${filter}`)
+    check(`${label}: the balance now is the dashboard's tracked balance`, near(o.balance.current, dash.kpis.netBalance), `${o.balance.current} vs ${dash.kpis.netBalance}`)
+    if (o.balance.expectedEnd !== null) {
+      check(
+        `${label}: expected = now + income to come − bills − everyday`,
+        near(o.balance.expectedEnd, o.balance.current + o.balance.incomeStillToCome - o.balance.billsStillToCome - o.balance.everydayStillToCome),
+      )
+      check(`${label}: income to come is never negative`, o.balance.incomeStillToCome >= 0)
+      check(`${label}: bills to come match the bills list`, near(o.balance.billsStillToCome, o.stillToCome.total))
+    }
+  }
+  check('a finished month has no balance estimate', get(`/month/outlook?year=${monthsToCheck[1].y}&month=${monthsToCheck[1].m}`).balance === null)
+  void now
 } else {
   console.log('  (only one account — nothing to filter)')
 }

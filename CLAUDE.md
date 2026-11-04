@@ -179,6 +179,17 @@ is driven through TanStack Query rather than local component state. Pages live f
 (`LoginPage`, `VerifyPage`, `DashboardPage`, `AccountsPage`, `ConnectBankPage`, `ConnectedPage`) matching the
 backend's magic-link + Enable Banking connect flows.
 
+Signed-in pages render inside `components/AppLayout.tsx`, which owns the navigation, so a page brings
+no background or outer padding of its own. Build pages from `components/ui.tsx` (`PageHeader`, `Panel`,
+`Kpi`, `LoadError`, `EmptyState`, `Modal`, the button classes) and list transactions with
+`components/TransactionList.tsx` rather than a table. The rules they exist to keep:
+
+- Everything is on the dark surfaces, because that is what `chartColors` was validated against.
+- A failed query shows `LoadError`, never the empty state: "no transactions" must only ever be true.
+- Text is at least `text-xs` and at least slate-400. `chartColors` values are for marks, not text.
+- Anything revealed on hover uses `REVEAL_ON_ROW_HOVER`, so it is always visible on touch.
+- It has to work at 400px wide. It is mostly used on a phone.
+
 ### Money and config conventions
 
 - Store monetary amounts as `decimal`/integer minor units, never floating point. Currency is DKK but keep a

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { getDuplicates, markDuplicate } from '../api/transactions'
+import { BUTTON_PRIMARY, BUTTON_SECONDARY, Modal, Spinner } from './ui'
 
 interface Props {
   accountNameById: Map<string, string>
@@ -40,47 +41,40 @@ export function DuplicatesDialog({ accountNameById, onClose, onDone }: Props) {
   })
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
-      <div
-        className="flex max-h-[85vh] w-full max-w-3xl flex-col rounded-xl border border-slate-200 bg-white shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="border-b border-slate-200 px-6 py-4">
-          <h2 className="text-base font-semibold text-slate-800">Possible duplicates</h2>
-          <p className="mt-1 text-sm text-slate-500">
+    <Modal title="Possible duplicates" onClose={onClose} size="max-w-3xl" dismissable={!isPending}>
+        <div className="border-b border-[#232b3b] px-5 pt-1 pb-3">
+          <p className="text-sm text-slate-400">
             {isLoading
               ? 'Looking for transactions recorded more than once…'
               : data && data.groupCount > 0
-                ? `${data.groupCount} set${data.groupCount === 1 ? '' : 's'} share an account, date and amount. ${selectedIds.length} copy/copies selected to exclude.`
+                ? `${data.groupCount} set${data.groupCount === 1 ? '' : 's'} share an account, date and amount. ${selectedIds.length} selected to exclude.`
                 : 'Nothing looks duplicated.'}
           </p>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-6 py-3">
+        <div className="flex-1 overflow-y-auto px-5 py-3">
           {isLoading ? (
-            <div className="flex justify-center py-10">
-              <div className="h-6 w-6 animate-spin rounded-full border-4 border-indigo-500 border-t-transparent" />
-            </div>
+            <Spinner />
           ) : !data || data.groupCount === 0 ? (
-            <p className="py-8 text-center text-sm text-slate-500">
+            <p className="py-8 text-center text-sm text-slate-400">
               No transaction shares an account, date and amount with another.
             </p>
           ) : (
             <div className="space-y-3">
               {data.groups.map((g) => (
-                <div key={`${g.bankAccountId}-${g.bookingDate}-${g.amount}`} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <div key={`${g.bankAccountId}-${g.bookingDate}-${g.amount}`} className="rounded-lg border border-[#232b3b] bg-[#111620] p-3">
                   <div className="mb-2 flex items-center justify-between gap-3 text-xs">
-                    <span className="text-slate-500">
+                    <span className="text-slate-400">
                       {g.bookingDate} · {accountNameById.get(g.bankAccountId) ?? 'Unknown account'}
                     </span>
-                    <span className={`tabular-nums ${g.amount < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                    <span className={`tabular-nums ${g.amount < 0 ? 'text-red-400' : 'text-emerald-400'}`}>
                       {kr(g.amount, g.currency)}
                     </span>
                   </div>
                   {/* A pair the user never created by hand needs explaining, or the only
                       conclusion available is that the app invented a transaction. */}
                   {g.origin === 'bank' && (
-                    <p className="mb-2 rounded bg-sky-50 px-2 py-1.5 text-[0.7rem] text-sky-800">
+                    <p className="mb-2 rounded bg-sky-500/10 px-2 py-1.5 text-xs text-sky-200">
                       Both copies came from the bank under different ids — usually a payment that
                       was sent through once while still pending and again once it settled. Keeping
                       the newer one; it's the id the bank still reports.
@@ -91,21 +85,20 @@ export function DuplicatesDialog({ accountNameById, onClose, onDone }: Props) {
                       <label
                         key={i.id}
                         className={`flex cursor-pointer items-center gap-2.5 rounded px-2 py-1.5 text-sm transition-colors ${
-                          isSelected(i.id) ? 'bg-red-50 text-slate-400 line-through' : 'text-slate-700 hover:bg-slate-100'
+                          isSelected(i.id) ? 'bg-red-500/10 text-slate-400 line-through' : 'text-slate-200 hover:bg-[#1a1f2e]/5'
                         }`}
                       >
                         <input
                           type="checkbox"
                           checked={isSelected(i.id)}
                           onChange={(e) => setOverrides((prev) => ({ ...prev, [i.id]: e.target.checked }))}
-                          className="rounded border-slate-300"
                         />
-                        <span className="min-w-0 flex-1 truncate" title={`id: ${i.externalTransactionId}`}>
+                        <span className="min-w-0 flex-1 break-words" title={`id: ${i.externalTransactionId}`}>
                           {i.description}
                         </span>
                         <span
-                          className={`shrink-0 rounded px-1.5 py-0.5 text-[0.6rem] uppercase tracking-wide ${
-                            i.source === 'csv' ? 'bg-amber-100 text-amber-700' : 'bg-sky-100 text-sky-700'
+                          className={`shrink-0 rounded px-1.5 py-0.5 text-xs ${
+                            i.source === 'csv' ? 'bg-amber-500/15 text-amber-300' : 'bg-sky-500/15 text-sky-300'
                           }`}
                           title={i.source === 'csv' ? 'Came from a CSV import' : "Came from the bank's own feed"}
                         >
@@ -120,9 +113,9 @@ export function DuplicatesDialog({ accountNameById, onClose, onDone }: Props) {
           )}
         </div>
 
-        <div className="border-t border-slate-200 px-6 py-4">
+        <div className="border-t border-[#232b3b] px-5 py-3">
           {data && data.groupCount > 0 && (
-            <p className="mb-3 text-xs text-slate-500">
+            <p className="mb-3 text-xs text-slate-400">
               Checked copies are excluded from every total. Nothing is deleted — you can restore
               them from the account's transaction list.
             </p>
@@ -131,7 +124,7 @@ export function DuplicatesDialog({ accountNameById, onClose, onDone }: Props) {
             <button
               onClick={onClose}
               disabled={isPending}
-              className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+              className={BUTTON_SECONDARY}
             >
               {data && data.groupCount > 0 ? 'Cancel' : 'Close'}
             </button>
@@ -139,14 +132,13 @@ export function DuplicatesDialog({ accountNameById, onClose, onDone }: Props) {
               <button
                 onClick={() => apply()}
                 disabled={isPending || selectedIds.length === 0}
-                className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                className={BUTTON_PRIMARY}
               >
                 {isPending ? 'Marking…' : `Exclude ${selectedIds.length}`}
               </button>
             )}
           </div>
         </div>
-      </div>
-    </div>
+      </Modal>
   )
 }

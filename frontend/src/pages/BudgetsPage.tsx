@@ -7,6 +7,7 @@ import { readPeriod, writePeriod, currentMonth, MONTH_NAMES } from '../lib/perio
 import type { Period } from '../api/transactions'
 import { drillTo } from '../lib/drill'
 import { buildCategoryColors, EXPENSE, NEUTRAL } from '../lib/chartColors'
+import { BUTTON_PRIMARY, BUTTON_SMALL, EmptyState, INPUT, Kpi, LoadError, PageHeader, Panel, Spinner } from '../components/ui'
 
 const kr = (n: number) =>
   n.toLocaleString('da-DK', { style: 'currency', currency: 'DKK', maximumFractionDigits: 0 })
@@ -47,80 +48,60 @@ export function BudgetsPage() {
     drillTo(group.categoryName, { categoryId: group.categoryId, direction: 'expense' }, [], period, { measure: 'outflow' })
 
   return (
-    <div className="min-h-screen bg-[#0f1117] px-4 py-6 text-slate-200 md:px-8 md:py-8">
-      <div className="mx-auto max-w-5xl">
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <Link to="/dashboard" className="text-xs text-slate-500 hover:text-slate-300">
-              ← Spending
-            </Link>
-            <h1 className="mt-1 text-xl font-bold text-slate-50">🎯 Budgets</h1>
-            <p className="mt-0.5 text-xs text-slate-500">
-              {MONTH_NAMES[period.month! - 1]} {period.year}
-            </p>
-          </div>
-          <div className="flex items-center gap-1">
-            <button
-              onClick={() => setPeriod(shiftMonth(period, -1))}
-              className="rounded-lg border border-slate-700 bg-[#1a1f2e] px-2.5 py-1.5 text-xs text-slate-300 hover:bg-[#232b3b]"
-              aria-label="Previous month"
-            >
-              ←
-            </button>
-            <button
-              onClick={() => setPeriod(shiftMonth(period, 1))}
-              className="rounded-lg border border-slate-700 bg-[#1a1f2e] px-2.5 py-1.5 text-xs text-slate-300 hover:bg-[#232b3b]"
-              aria-label="Next month"
-            >
-              →
-            </button>
-          </div>
-        </div>
-
-        {isLoading ? (
-          <div className="flex justify-center py-20">
-            <div className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-600 border-t-transparent" />
-          </div>
-        ) : isError && !data ? (
-          <Panel title="Couldn't load budgets">
-            <div className="py-8 text-center">
-              <div className="mb-2 text-3xl">⚠️</div>
-              <p className="text-slate-400">The request failed — your budgets haven't gone anywhere.</p>
-              <button
-                onClick={() => refetch()}
-                disabled={isRefetching}
-                className="mt-4 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-              >
-                {isRefetching ? 'Retrying…' : 'Try again'}
+    <div>
+      <div>
+        <PageHeader
+          title="Budgets"
+          sub="Monthly limits, against what you actually spend"
+          aside={
+            <div className="flex items-center gap-1">
+              <button onClick={() => setPeriod(shiftMonth(period, -1))} className={`${BUTTON_SMALL} min-w-9`} aria-label="Previous month">
+                ‹
+              </button>
+              <span className="min-w-20 text-center text-sm font-medium text-slate-200 tabular-nums">
+                {MONTH_NAMES[period.month! - 1]} {period.year}
+              </span>
+              <button onClick={() => setPeriod(shiftMonth(period, 1))} className={`${BUTTON_SMALL} min-w-9`} aria-label="Next month">
+                ›
               </button>
             </div>
-          </Panel>
+          }
+        />
+
+        {isLoading ? (
+          <Spinner large />
+        ) : isError && !data ? (
+          <LoadError what="your budgets" onRetry={() => refetch()} retrying={isRefetching} />
         ) : (
           <>
-            <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-3">
-              <Kpi label="Budgeted" sub="per month" value={kr(data!.totalLimit)} />
+            <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-3">
+              <Kpi label="Budgeted per month" value={kr(data!.totalLimit)} />
               <Kpi
-                label="This month"
+                label="Spent this month"
                 value={kr(data!.totalActual)}
-                color={data!.totalLimit > 0 && data!.totalActual > data!.totalLimit ? EXPENSE : undefined}
+                valueClass={data!.totalLimit > 0 && data!.totalActual > data!.totalLimit ? 'text-red-400' : undefined}
               />
               {/* The number to judge "am I on track" by: a quarterly or yearly bill landing in
                   one month spikes "This month", but it averages out here. */}
               <Kpi
+                className="col-span-2 md:col-span-1"
                 label="Typical month"
-                sub="last 12 months"
+                sub="Over the last 12 months"
                 value={kr(data!.totalAverage)}
-                color={data!.totalLimit > 0 && data!.totalAverage > data!.totalLimit ? EXPENSE : undefined}
+                valueClass={data!.totalLimit > 0 && data!.totalAverage > data!.totalLimit ? 'text-red-400' : undefined}
               />
             </div>
 
             <Panel title="By category">
               {!data!.hasAnyBudgets && (
-                <p className="mb-4 text-sm text-slate-500">
+                <p className="mb-4 text-sm text-slate-400">
                   No limits set yet — enter a monthly limit next to any category below. Each one is
                   also shown against its typical month over the last year, so a quarterly or yearly
                   bill landing in one month isn't mistaken for overspending.
                 </p>
+              )}
+              {data!.groups.length === 0 && (
+                <EmptyState title="No categories to budget yet">Categories appear here once you've connected a bank.</EmptyState>
               )}
               <div className="space-y-4">
                 {data!.groups.map((g) => (
@@ -183,29 +164,37 @@ function BudgetRow({ group, color, to }: { group: BudgetGroup; color: string; to
 
   return (
     <div>
-      <div className="mb-1 flex flex-wrap items-center justify-between gap-2 text-sm">
-        <Link to={to} className="min-w-0 flex-1 truncate text-slate-200 hover:text-slate-50">
+      <div className="mb-1.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-sm">
+        <Link to={to} className="min-w-0 flex-1 basis-32 truncate text-slate-200 hover:text-slate-50">
           {group.categoryEmoji} {group.categoryName}
         </Link>
-        <span className="shrink-0 tabular-nums" style={{ color: over ? EXPENSE : '#94a3b8' }}>
+        <span className={`order-3 basis-full tabular-nums sm:order-none sm:shrink-0 sm:basis-auto ${over ? 'text-red-400' : 'text-slate-300'}`}>
           {kr(group.actual)}
-          {limit !== null && <span className="text-slate-600"> / {kr(limit)}</span>}
+          {limit !== null && <span className="text-slate-400"> of {kr(limit)}</span>}
         </span>
         {editing ? (
           <div className="flex shrink-0 items-center gap-1">
             <input
               autoFocus
               type="number"
+              inputMode="decimal"
+              aria-label={`Monthly limit for ${group.categoryName}`}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && commit()}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') commit()
+                if (e.key === 'Escape') {
+                  reset()
+                  setEditing(false)
+                }
+              }}
               placeholder="No limit"
-              className="w-24 rounded border border-indigo-500 bg-[#111620] px-2 py-0.5 text-right text-xs text-slate-200 outline-none"
+              className={`${INPUT} w-24 text-right`}
             />
             <button
               onClick={commit}
               disabled={saving}
-              className="rounded bg-indigo-600 px-2 py-0.5 text-[0.65rem] font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+              className={BUTTON_PRIMARY}
             >
               {saving ? 'Saving…' : 'Save'}
             </button>
@@ -214,7 +203,7 @@ function BudgetRow({ group, color, to }: { group: BudgetGroup; color: string; to
                 reset()
                 setEditing(false)
               }}
-              className="rounded border border-slate-700 px-2 py-0.5 text-[0.65rem] text-slate-400 hover:bg-[#232b3b]"
+              className={BUTTON_SMALL}
             >
               Cancel
             </button>
@@ -222,14 +211,15 @@ function BudgetRow({ group, color, to }: { group: BudgetGroup; color: string; to
         ) : (
           <button
             onClick={startEditing}
-            className="shrink-0 rounded border border-slate-700 px-2 py-0.5 text-[0.65rem] text-slate-400 hover:bg-[#232b3b]"
+            className={`${BUTTON_SMALL} shrink-0`}
+            aria-label={`${limit === null ? 'Set limit for' : 'Edit limit for'} ${group.categoryName}`}
           >
             {limit === null ? 'Set limit' : 'Edit'}
           </button>
         )}
       </div>
       {error && (
-        <p className="mb-1 text-[0.68rem]" style={{ color: EXPENSE }}>
+        <p className="mb-1 text-xs text-red-400" role="alert">
           Couldn't save — the request failed. Your typed value is still here; try again.
         </p>
       )}
@@ -238,40 +228,17 @@ function BudgetRow({ group, color, to }: { group: BudgetGroup; color: string; to
         {overflowFraction > 0 && <div style={{ width: `${overflowFraction * 100}%`, background: EXPENSE }} />}
       </div>
       {group.average !== null && (group.average > 0 || group.actual > 0) && (
-        <p className="mt-1 text-[0.68rem] text-slate-600">
+        <p className="mt-1 text-xs text-slate-400">
           Typical month {kr(group.average)}
           {group.unusual && (
-            <span style={{ color: NEUTRAL }}>
+            <span>
               {' '}
               · higher than usual this month — likely a quarterly or yearly charge
             </span>
           )}
-          {withinOnAverage && <span style={{ color: NEUTRAL }}> · within budget in a typical month</span>}
+          {withinOnAverage && <span> · within budget in a typical month</span>}
         </p>
       )}
-    </div>
-  )
-}
-
-function Kpi({ label, value, color, sub }: { label: string; value: string; color?: string; sub?: string }) {
-  return (
-    <div className="rounded-xl border border-[#232b3b] bg-[#1a1f2e] px-4 py-3.5">
-      <div className="mb-1.5 text-[0.68rem] uppercase tracking-wider text-slate-600">
-        {label}
-        {sub && <span className="normal-case tracking-normal text-slate-700"> · {sub}</span>}
-      </div>
-      <div className="text-xl font-bold tabular-nums" style={color ? { color } : undefined}>
-        {value}
-      </div>
-    </div>
-  )
-}
-
-function Panel({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="mb-5 rounded-xl border border-[#232b3b] bg-[#1a1f2e] p-4 md:p-5">
-      <div className="mb-4 text-[0.7rem] font-bold uppercase tracking-wider text-slate-600">{title}</div>
-      {children}
     </div>
   )
 }

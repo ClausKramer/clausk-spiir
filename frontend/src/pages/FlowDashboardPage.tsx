@@ -2,9 +2,10 @@ import { useQuery } from '@tanstack/react-query'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { getFlowBreakdown, type FlowDirection, type Period, type TransactionQuery } from '../api/transactions'
 import { getBankAccounts } from '../api/accounts'
-import { CategoryPicker } from '../components/CategoryPicker'
-import { TagEditor } from '../components/TagEditor'
-import { MONTH_NAMES, periodLabel, readPeriod, currentMonth } from '../lib/period'
+import { MonthBars } from '../components/MonthBars'
+import { TransactionList } from '../components/TransactionList'
+import { EmptyState, Kpi, LoadError, PageHeader, Panel, Spinner } from '../components/ui'
+import { periodLabel, readPeriod, currentMonth } from '../lib/period'
 import { drillTo, dashboardLink } from '../lib/drill'
 import { BarRow } from '../components/BarRow'
 import { INCOME, EXPENSE, KIND_NONE, buildCategoryColors } from '../lib/chartColors'
@@ -20,6 +21,8 @@ export function FlowDashboardPage() {
   const direction: FlowDirection = routeDirection === 'income' ? 'income' : 'expense'
   const isIncome = direction === 'income'
   const accent = isIncome ? INCOME : EXPENSE
+  // The chart colours are for marks. On text they fall short of 4.5:1, so figures take a lighter step of the same hue.
+  const accentText = isIncome ? 'text-emerald-400' : 'text-red-400'
 
   const accountIds = search.getAll('accountIds')
   const period: Period = readPeriod(search) ?? currentMonth()
@@ -36,7 +39,7 @@ export function FlowDashboardPage() {
   const categoryColors = buildCategoryColors(allCategories)
   const accountNameById = new Map(accounts.map((a) => [a.id, a.name]))
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch, isRefetching } = useQuery({
     queryKey: ['by-flow', direction, accountIds, period],
     queryFn: () => getFlowBreakdown(direction, accountIds, period),
   })
@@ -50,7 +53,6 @@ export function FlowDashboardPage() {
 
   const maxCategory = Math.max(...(data?.byCategory.map((c) => c.total) ?? [0]), 1)
   const maxSource = Math.max(...(data?.bySource.map((s) => s.total) ?? [0]), 1)
-  const maxMonth = Math.max(...(data?.monthlyTotals.map((m) => m.total) ?? [0]), 1)
 
   // How this period compares to a typical one. Null when there's only a single month on record,
   // where there is no "typical" yet.
@@ -58,90 +60,61 @@ export function FlowDashboardPage() {
   const vsAverage = average && average > 0 && data ? data.total / average - 1 : null
 
   return (
-    <div className="min-h-screen bg-[#0f1117] px-4 py-6 text-slate-200 md:px-8 md:py-8">
-      <div className="mx-auto max-w-5xl">
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <Link to={dashboardLink(accountIds, period)} className="text-xs text-slate-500 hover:text-slate-300">
-              ← Dashboard
-            </Link>
-            <h1 className="mt-1 flex items-center gap-2 text-xl font-bold text-slate-50">
-              <span className="h-3 w-3 rounded-sm" style={{ background: accent }} />
-              {isIncome ? 'Income' : 'Expenses'}
-            </h1>
-            <p className="mt-0.5 text-xs text-slate-500">
+    <div>
+      <div>
+        <PageHeader
+          title={isIncome ? 'Income' : 'Expenses'}
+          back={{ to: dashboardLink(accountIds, period), label: 'Spending' }}
+          sub={
+            <>
               {label}
               {accountIds.length > 0 && ` · ${accountIds.length} of ${accounts.length} accounts`}
-            </p>
-          </div>
-          {data && (
-            <div className="text-right">
-              <div className="text-2xl font-bold tabular-nums" style={{ color: accent }}>
-                {kr(data.total)}
+            </>
+          }
+          aside={
+            data && (
+              <div className="text-right">
+                <div className={`text-2xl font-bold tabular-nums ${accentText}`}>{kr(data.total)}</div>
+                {vsAverage !== null && Math.abs(vsAverage) >= 0.005 && (
+                  <div className="text-xs text-slate-400">
+                    {vsAverage > 0 ? '▲' : '▼'} {Math.abs(vsAverage * 100).toFixed(0)}% vs. the{' '}
+                    {kr(average!)} monthly average
+                  </div>
+                )}
               </div>
-              {vsAverage !== null && Math.abs(vsAverage) >= 0.005 && (
-                <div className="text-[0.7rem] text-slate-500">
-                  {vsAverage > 0 ? '▲' : '▼'} {Math.abs(vsAverage * 100).toFixed(0)}% vs. the{' '}
-                  {kr(average!)} monthly average
-                </div>
-              )}
-            </div>
-          )}
-        </div>
+            )
+          }
+        />
 
         {isLoading ? (
-          <div className="flex justify-center py-20">
-            <div className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-600 border-t-transparent" />
-          </div>
+          <Spinner large />
+        ) : isError && !data ? (
+          <LoadError what={isIncome ? 'your income' : 'your expenses'} onRetry={() => refetch()} retrying={isRefetching} />
         ) : !data || data.items.length === 0 ? (
-          <Panel title="Nothing here">
-            <p className="py-6 text-center text-sm text-slate-500">
-              No {isIncome ? 'money in' : 'money out'} for {label}.
-            </p>
+          <Panel title={label}>
+            <EmptyState title={`No ${isIncome ? 'money in' : 'money out'} for ${label}`} />
           </Panel>
         ) : (
           <>
-            <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-4">
-              <Kpi label="Total" value={kr(data.total)} accent={accent} />
+            <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+              <Kpi label="Total" value={kr(data.total)} valueClass={accentText} />
               <Kpi label="Transactions" value={String(data.stats.transactionCount)} />
               <Kpi label="Average each" value={kr(data.stats.average)} />
               <Kpi label="Largest single" value={kr(data.stats.largest)} />
             </div>
 
             {data.monthlyTotals.length > 1 && (
-              <Panel title={`📅 ${isIncome ? 'Income' : 'Spending'} per month`}>
-                <div className="flex h-40 items-end gap-1.5">
-                  {data.monthlyTotals.map((m) => (
-                    <div
-                      key={`${m.year}-${m.month}`}
-                      className="group relative flex h-full flex-1 flex-col justify-end"
-                      title={`${MONTH_NAMES[m.month - 1]}: ${kr(m.total)}`}
-                    >
-                      <span className="absolute inset-x-0 -top-1 text-center text-[0.6rem] tabular-nums text-slate-400 opacity-0 transition-opacity group-hover:opacity-100">
-                        {m.total > 0 ? Math.round(m.total).toLocaleString('da-DK') : ''}
-                      </span>
-                      <div
-                        className="w-full rounded-t"
-                        style={{
-                          height: `${(m.total / maxMonth) * 100}%`,
-                          minHeight: m.total !== 0 ? 2 : 0,
-                          background: accent,
-                        }}
-                      />
-                    </div>
-                  ))}
-                </div>
-                <div className="mt-1.5 flex gap-1.5">
-                  {data.monthlyTotals.map((m) => (
-                    <div key={`l-${m.year}-${m.month}`} className="flex-1 text-center text-[0.6rem] text-slate-600">
-                      {MONTH_NAMES[m.month - 1]}
-                    </div>
-                  ))}
-                </div>
+              <Panel title={`${isIncome ? 'Income' : 'Spending'} per month`}>
+                <MonthBars
+                  data={data.monthlyTotals.map((m) => ({ year: m.year, month: m.month, value: m.total }))}
+                  colorOf={() => accent}
+                  format={kr}
+                  height="h-40"
+                />
               </Panel>
             )}
 
-            <Panel title={`🗂️ By category`}>
+            <Panel title={`By category`}>
               <div className="space-y-1.5">
                 {data.byCategory.map((c) => (
                   <BarRow
@@ -185,7 +158,7 @@ export function FlowDashboardPage() {
                   />
                 ))}
                 {data.bySource.length > 12 && (
-                  <p className="pt-1 text-center text-xs text-slate-600">
+                  <p className="pt-1 text-center text-xs text-slate-400">
                     …and {data.bySource.length - 12} more
                   </p>
                 )}
@@ -193,7 +166,7 @@ export function FlowDashboardPage() {
             </Panel>
 
             {data.byAccount.length > 1 && (
-              <Panel title="🏦 By account">
+              <Panel title="By account">
                 <div className="flex flex-wrap gap-2">
                   {data.byAccount.map((a) => (
                     <Link
@@ -201,11 +174,11 @@ export function FlowDashboardPage() {
                       to={drill(accountNameById.get(a.bankAccountId) ?? 'Account', {}, [a.bankAccountId])}
                       className="rounded-lg border border-[#1e2535] bg-[#111620] px-3 py-2 hover:border-slate-600"
                     >
-                      <div className="text-[0.68rem] text-slate-500">
+                      <div className="text-xs text-slate-400">
                         {accountNameById.get(a.bankAccountId) ?? 'Unknown account'}
                       </div>
                       <div className="mt-0.5 text-sm font-semibold tabular-nums text-slate-200">{kr(a.total)}</div>
-                      <div className="text-[0.62rem] text-slate-600">{a.count} transactions</div>
+                      <div className="text-xs text-slate-400">{a.count} transactions</div>
                     </Link>
                   ))}
                 </div>
@@ -213,9 +186,9 @@ export function FlowDashboardPage() {
             )}
 
             {data.tagBreakdown.length > 0 && (
-              <Panel title="🏷️ By tag">
-                <p className="mb-2.5 text-xs text-slate-600">
-                  One transaction can carry several tags, so these won't add up to {kr(data.total)}.
+              <Panel title="By tag">
+                <p className="mb-2.5 text-xs text-slate-400">
+                  One transaction can carry several tags, so these won't add up to the total.
                 </p>
                 <div className="flex flex-wrap gap-2">
                   {data.tagBreakdown.map((tag) => (
@@ -224,92 +197,23 @@ export function FlowDashboardPage() {
                       to={drill(tag.name, { tagId: tag.tagId })}
                       className="rounded-lg border border-violet-500/25 bg-violet-500/10 px-3 py-2 hover:border-violet-400/50"
                     >
-                      <div className="text-[0.68rem] font-medium text-violet-300">{tag.name}</div>
+                      <div className="text-xs font-medium text-violet-300">{tag.name}</div>
                       <div className="mt-0.5 text-sm font-semibold tabular-nums text-slate-200">
                         {kr(Math.abs(tag.total))}
                       </div>
-                      <div className="text-[0.62rem] text-slate-500">{tag.count} transactions</div>
+                      <div className="text-xs text-slate-400">{tag.count} transactions</div>
                     </Link>
                   ))}
                 </div>
               </Panel>
             )}
 
-            <Panel title="📋 Transactions">
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-[#232b3b] text-left text-[0.68rem] uppercase tracking-wider text-slate-600">
-                      <th className="py-2 pr-3 font-medium">Date</th>
-                      <th className="py-2 pr-3 font-medium">Description</th>
-                      <th className="py-2 pr-3 font-medium">Account</th>
-                      <th className="py-2 pr-3 font-medium">Category</th>
-                      <th className="py-2 pl-3 text-right font-medium">Amount</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.items.map((tx) => (
-                      <tr
-                        key={tx.id}
-                        className="group/row border-b border-[#1e2535] last:border-none hover:bg-white/[0.02]"
-                      >
-                        <td className="py-2 pr-3 whitespace-nowrap text-slate-500">{tx.bookingDate}</td>
-                        <td className="py-2 pr-3 text-slate-300">
-                          {tx.description}
-                          <div className="mt-1">
-                            <TagEditor dark transactionId={tx.id} tags={tx.tags} />
-                          </div>
-                        </td>
-                        <td className="py-2 pr-3 whitespace-nowrap text-slate-500">
-                          {accountNameById.get(tx.bankAccountId) ?? '—'}
-                        </td>
-                        <td className="py-2 pr-3">
-                          <CategoryPicker
-                            dark
-                            transactionId={tx.id}
-                            categoryId={tx.categoryId}
-                            categoryName={tx.categoryName}
-                            categoryEmoji={tx.categoryEmoji}
-                          />
-                        </td>
-                        <td
-                          className="py-2 pl-3 text-right font-semibold tabular-nums"
-                          style={{ color: accent }}
-                        >
-                          {tx.amount.toLocaleString('da-DK', { style: 'currency', currency: tx.currency })}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+            <Panel title="Transactions">
+              <TransactionList items={data.items} accountNameById={accountNameById} />
             </Panel>
           </>
         )}
       </div>
-    </div>
-  )
-}
-
-function Kpi({ label, value, accent }: { label: string; value: string; accent?: string }) {
-  return (
-    <div className="rounded-xl border border-[#232b3b] bg-[#1a1f2e] px-3.5 py-3">
-      <div className="text-[0.62rem] uppercase tracking-wider text-slate-600">{label}</div>
-      <div
-        className="mt-1 text-lg font-bold tabular-nums"
-        style={accent ? { color: accent } : undefined}
-      >
-        {value}
-      </div>
-    </div>
-  )
-}
-
-function Panel({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="mb-5 rounded-xl border border-[#232b3b] bg-[#1a1f2e] p-4 md:p-5">
-      <div className="mb-4 text-[0.7rem] font-bold uppercase tracking-wider text-slate-600">{title}</div>
-      {children}
     </div>
   )
 }

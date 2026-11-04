@@ -35,6 +35,13 @@ export function writePeriod(params: URLSearchParams, period: Period | null) {
   else params.set('month', String(period.month))
 }
 
+// "3 Nov 2026" from "2026-11-03". Split rather than parsed as a Date, which reads the string as UTC
+// midnight and can land on the previous day west of Greenwich.
+export function formatDay(isoDate: string) {
+  const [year, month, day] = isoDate.split('-').map(Number)
+  return `${day} ${MONTH_NAMES[month - 1]} ${year}`
+}
+
 export function currentMonth(): Period {
   const now = new Date()
   return { year: now.getFullYear(), month: now.getMonth() + 1 }

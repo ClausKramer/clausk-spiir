@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useNavigate } from 'react-router-dom'
 import { getMe, logout, requestMagicLink } from '../api/auth'
 import { isUnauthorized } from '../api/client'
 
@@ -16,10 +17,14 @@ export function useMe() {
 
 export function useLogout() {
   const qc = useQueryClient()
+  const navigate = useNavigate()
   return useMutation({
     mutationFn: logout,
     onSettled: () => {
       localStorage.removeItem('access_token')
+      // Leave first: clearing the cache doesn't re-render whoever is on screen, so without this
+      // the button appeared to do nothing and the signed-in page stayed up.
+      navigate('/login', { replace: true })
       qc.clear()
     },
   })

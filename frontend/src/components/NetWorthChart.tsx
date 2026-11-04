@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { INCOME, EXPENSE, NET, SURFACE } from '../lib/chartColors'
+import { useChartWidth } from '../lib/useChartWidth'
 import { MONTH_NAMES } from '../lib/period'
 
 export interface NetWorthPoint {
@@ -10,10 +11,8 @@ export interface NetWorthPoint {
   net: number
 }
 
-const W = 760
 const H = 300
 const PAD = { top: 16, right: 14, bottom: 32, left: 76 }
-const PLOT_W = W - PAD.left - PAD.right
 const PLOT_H = H - PAD.top - PAD.bottom
 const MAX_BAR = 26
 
@@ -43,10 +42,12 @@ export function NetWorthChart({
   /** Opens a month for editing. Optional so the chart stays usable as a plain read-only view. */
   onSelect?: (point: NetWorthPoint) => void
 }) {
+  const [chartRef, W] = useChartWidth()
+  const PLOT_W = W - PAD.left - PAD.right
   const [hover, setHover] = useState<number | null>(null)
 
   if (data.length === 0)
-    return <p className="py-10 text-center text-sm text-slate-600">Nothing recorded for this period yet.</p>
+    return <p className="py-10 text-center text-sm text-slate-400">Nothing recorded for this period yet.</p>
 
   // One scale, all kroner. Liabilities extend below zero, so the domain has to reach there.
   const maxV = Math.max(...data.map((d) => Math.max(d.assets, d.net)), 0)
@@ -73,12 +74,12 @@ export function NetWorthChart({
   const labelEvery = Math.max(1, Math.ceil(data.length / 12))
 
   return (
-    <div className="relative">
+    <div ref={chartRef} className="relative">
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="Net worth over time: assets, liabilities and net">
         {ticks.map((t) => (
           <g key={t}>
             <line x1={PAD.left} x2={W - PAD.right} y1={y(t)} y2={y(t)} stroke="#2a3346" strokeWidth={1} />
-            <text x={PAD.left - 10} y={y(t) + 4} textAnchor="end" className="fill-slate-500" fontSize={11}>
+            <text x={PAD.left - 10} y={y(t) + 4} textAnchor="end" className="fill-slate-400" fontSize={12}>
               {kr(t)}
             </text>
           </g>
@@ -98,8 +99,8 @@ export function NetWorthChart({
               <rect x={liabX} y={zeroY} width={barW} height={liabH} fill={EXPENSE} rx={4} />
               {liabH > 4 && <rect x={liabX} y={zeroY} width={barW} height={4} fill={EXPENSE} />}
               {i % labelEvery === 0 && (
-                <text x={cx} y={H - 10} textAnchor="middle" className="fill-slate-500" fontSize={11}>
-                  {MONTH_NAMES[d.month - 1]}
+                <text x={cx} y={H - 10} textAnchor="middle" className="fill-slate-400" fontSize={12}>
+                  {W < 520 ? MONTH_NAMES[d.month - 1].slice(0, 1) : MONTH_NAMES[d.month - 1]}
                   {data.length > 12 && <tspan className="fill-slate-600"> {String(d.year).slice(2)}</tspan>}
                 </text>
               )}

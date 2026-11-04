@@ -2,13 +2,13 @@ import { Link } from 'react-router-dom'
 
 export function TermsPage() {
   return (
-    <div className="min-h-screen bg-slate-50 px-4 py-12">
-      <div className="mx-auto max-w-2xl rounded-2xl bg-white p-8 shadow-sm border border-slate-100">
-        <Link to="/login" className="text-sm text-indigo-600 hover:underline">← Back</Link>
-        <h1 className="mt-4 text-2xl font-bold text-slate-800">Terms of Service</h1>
+    <div className="min-h-dvh px-4 py-8">
+      <div className="mx-auto max-w-2xl rounded-xl border border-[#232b3b] bg-[#1a1f2e] p-5 sm:p-8">
+        <Link to="/login" className="text-sm text-indigo-300 hover:underline">← Back</Link>
+        <h1 className="mt-4 text-2xl font-bold text-slate-100">Terms of Service</h1>
         <p className="mt-1 text-sm text-slate-400">Last updated 2026-08-28</p>
 
-        <div className="mt-6 space-y-5 text-sm leading-relaxed text-slate-600">
+        <div className="mt-6 space-y-5 text-sm leading-relaxed text-slate-300">
           <p>
             Spiir is a personal project, built and operated by a single individual for their own
             personal finance tracking. It is provided as-is, with no warranty of any kind, and no
@@ -16,7 +16,7 @@ export function TermsPage() {
           </p>
 
           <section>
-            <h2 className="font-semibold text-slate-800">What this app does and does not do</h2>
+            <h2 className="font-semibold text-slate-100">What this app does and does not do</h2>
             <p className="mt-2">
               This app reads bank account and transaction data through Enable Banking, a regulated
               open banking provider (AISP), and stores it locally to display and categorize it. It
@@ -27,7 +27,7 @@ export function TermsPage() {
           </section>
 
           <section>
-            <h2 className="font-semibold text-slate-800">Acceptable use</h2>
+            <h2 className="font-semibold text-slate-100">Acceptable use</h2>
             <p className="mt-2">
               Intended for personal use by the operator and anyone the operator has explicitly
               invited. Bank account connection is restricted to accounts pre-authorized by the
@@ -37,7 +37,7 @@ export function TermsPage() {
           </section>
 
           <section>
-            <h2 className="font-semibold text-slate-800">No warranty, no liability</h2>
+            <h2 className="font-semibold text-slate-100">No warranty, no liability</h2>
             <p className="mt-2">
               The app is provided "as is." The operator makes no guarantees about accuracy of
               displayed data (e.g. automatic categorization), availability, or fitness for any
@@ -46,7 +46,7 @@ export function TermsPage() {
           </section>
 
           <section>
-            <h2 className="font-semibold text-slate-800">Changes</h2>
+            <h2 className="font-semibold text-slate-100">Changes</h2>
             <p className="mt-2">
               These terms may change as the app evolves. Continued use after a change constitutes
               acceptance of the updated terms.
@@ -54,7 +54,7 @@ export function TermsPage() {
           </section>
 
           <section>
-            <h2 className="font-semibold text-slate-800">Contact</h2>
+            <h2 className="font-semibold text-slate-100">Contact</h2>
             <p className="mt-2">privat@clausk.dk</p>
           </section>
         </div>

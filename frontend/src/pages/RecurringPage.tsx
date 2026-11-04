@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
+import { BUTTON_SECONDARY, BUTTON_SMALL, EmptyState, Kpi, LoadError, Modal, Notice, PageHeader, Panel, Spinner } from '../components/ui'
 import {
   getRecurring,
   getDismissedRecurring,
@@ -8,9 +9,8 @@ import {
   undismissRecurring,
   type RecurringSeries,
 } from '../api/recurring'
-import { currentMonth } from '../lib/period'
+import { currentMonth, formatDay } from '../lib/period'
 import { drillTo } from '../lib/drill'
-import { EXPENSE } from '../lib/chartColors'
 
 const kr = (n: number) =>
   n.toLocaleString('da-DK', { style: 'currency', currency: 'DKK', maximumFractionDigits: 0 })
@@ -49,8 +49,8 @@ export function RecurringPage() {
 
   const { mutate: dismiss } = useMutation({
     mutationFn: dismissRecurring,
-    onSuccess: () => {
-      setStatus(null)
+    onSuccess: (_result, merchantKey) => {
+      setStatus(`Moved “${merchantKey}” out of this list. Manage dismissed brings it back.`)
       qc.invalidateQueries({ queryKey: ['recurring'] })
     },
     // Surfaced rather than swallowed: a dismiss that fails silently looks exactly like one that
@@ -59,101 +59,70 @@ export function RecurringPage() {
   })
 
   return (
-    <div className="min-h-screen bg-[#0f1117] px-4 py-6 text-slate-200 md:px-8 md:py-8">
-      <div className="mx-auto max-w-4xl">
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <Link to="/dashboard" className="text-xs text-slate-500 hover:text-slate-300">
-              ← Spending
-            </Link>
-            <h1 className="mt-1 text-xl font-bold text-slate-50">🔁 Recurring</h1>
-            <p className="mt-0.5 text-xs text-slate-500">
-              Bills and subscriptions detected from your transaction history
-            </p>
-          </div>
-          <button
-            onClick={() => setManaging(true)}
-            className="rounded-lg border border-slate-700 bg-[#1a1f2e] px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-[#232b3b]"
-          >
-            Manage dismissed
-          </button>
-        </div>
+    <div>
+      <div>
+        <PageHeader
+          title="Recurring"
+          sub="Bills and subscriptions detected from your transactions"
+          aside={
+            <button onClick={() => setManaging(true)} className={BUTTON_SECONDARY}>
+              Manage dismissed
+            </button>
+          }
+        />
 
-        {status && (
-          <div className="mb-4 rounded-lg border border-[#232b3b] bg-[#1a1f2e] px-4 py-2.5 text-sm text-slate-300">
-            {status}
-          </div>
-        )}
+        {status && <Notice onDismiss={() => setStatus(null)}>{status}</Notice>}
 
         {isLoading ? (
-          <div className="flex justify-center py-20">
-            <div className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-600 border-t-transparent" />
-          </div>
+          <Spinner large />
         ) : isError && !data ? (
-          <Panel title="Couldn't load recurring charges">
-            <div className="py-8 text-center">
-              <div className="mb-2 text-3xl">⚠️</div>
-              <p className="text-slate-400">The request failed — nothing about your transactions has changed.</p>
-              <button
-                onClick={() => refetch()}
-                disabled={isRefetching}
-                className="mt-4 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-              >
-                {isRefetching ? 'Retrying…' : 'Try again'}
-              </button>
-            </div>
-          </Panel>
+          <LoadError what="recurring charges" onRetry={() => refetch()} retrying={isRefetching} />
         ) : data!.count === 0 ? (
-          <Panel title="Nothing detected yet">
-            <p className="py-8 text-center text-sm text-slate-500">
-              No repeating charges found in the last 13 months. A subscription or bill needs a few
-              occurrences on a regular schedule before it shows up here.
-            </p>
+          <Panel title="Recurring charges">
+            <EmptyState title="Nothing detected yet">
+              A subscription or bill needs a few occurrences on a regular schedule in the last 13 months before it
+              shows up here.
+            </EmptyState>
           </Panel>
         ) : (
           <>
-            <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-2">
-              <Kpi label="Monthly total" value={kr(data!.totalMonthlyEquivalent)} />
-              <Kpi label="Detected" value={String(data!.count)} />
+            <div className="mb-4 grid grid-cols-2 gap-3">
+              <Kpi label="Cost per month" value={kr(data!.totalMonthlyEquivalent)} />
+              <Kpi label="Charges detected" value={String(data!.count)} />
             </div>
 
             <Panel title="By monthly cost">
-              <div className="space-y-1">
+              <ul className="divide-y divide-[#232b3b]">
                 {data!.series.map((s) => (
-                  <div
-                    key={s.merchantKey}
-                    className="flex items-center gap-3 rounded px-2 py-2.5 hover:bg-[#111620]"
-                  >
-                    <Link to={drillToLastCharge(s)} className="min-w-0 flex-1">
-                      <div className="truncate text-sm text-slate-200">
+                  <li key={s.merchantKey} className="flex flex-wrap items-center gap-x-4 gap-y-2 py-3">
+                    <Link to={drillToLastCharge(s)} className="min-w-0 flex-1 basis-full hover:text-slate-50 sm:basis-0">
+                      <div className="text-sm break-words text-slate-200">
                         {s.categoryEmoji ? `${s.categoryEmoji} ` : ''}
                         {s.displayName}
                       </div>
-                      <div className="mt-0.5 text-[0.68rem] text-slate-600">
-                        {CADENCE_LABELS[s.cadence]} · next expected {new Date(s.nextExpectedDate).toLocaleDateString('da-DK')}
+                      <div className="mt-0.5 text-xs text-slate-400">
+                        {CADENCE_LABELS[s.cadence]}, next on {formatDay(s.nextExpectedDate.slice(0, 10))}
                       </div>
                     </Link>
-                    <div className="shrink-0 text-right">
-                      <div className="text-sm font-semibold tabular-nums text-slate-200">{kr(s.lastAmount)}</div>
+                    <div className="shrink-0 sm:text-right">
+                      <div className="text-sm font-semibold text-slate-200 tabular-nums">{kr(s.lastAmount)}</div>
                       {s.priceChanged && (
-                        <div className="text-[0.65rem] tabular-nums" style={{ color: EXPENSE }}>
-                          was {kr(s.previousAmount)}
-                        </div>
+                        <div className="text-xs text-red-400 tabular-nums">was {kr(s.previousAmount)}</div>
                       )}
                     </div>
-                    <div className="shrink-0 text-sm font-semibold tabular-nums text-slate-400">
-                      {kr(s.monthlyEquivalentCost)}<span className="text-[0.65rem] text-slate-600">/mo</span>
+                    <div className="shrink-0 text-sm font-semibold text-slate-300 tabular-nums sm:w-28 sm:text-right">
+                      {kr(s.monthlyEquivalentCost)}<span className="text-xs font-normal text-slate-400">/mo</span>
                     </div>
                     <button
                       onClick={() => dismiss(s.merchantKey)}
-                      className="shrink-0 rounded border border-slate-700 px-2 py-0.5 text-[0.65rem] text-slate-500 hover:bg-[#232b3b]"
-                      title="Not actually recurring"
+                      className={`${BUTTON_SMALL} ml-auto shrink-0`}
+                      title="Remove this from the list if it isn't really a repeating charge"
                     >
                       Not recurring
                     </button>
-                  </div>
+                  </li>
                 ))}
-              </div>
+              </ul>
             </Panel>
           </>
         )}
@@ -180,26 +149,17 @@ function ManageDismissedDialog({ onClose }: { onClose: () => void }) {
   })
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
-      <div
-        className="flex max-h-[80vh] w-full max-w-md flex-col rounded-xl border border-[#232b3b] bg-[#1a1f2e] shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="border-b border-[#232b3b] px-6 py-4">
-          <h2 className="text-base font-semibold text-slate-100">Dismissed series</h2>
-          <p className="mt-1 text-sm text-slate-500">Charges marked "not recurring" — restore one to see it again.</p>
-        </div>
-        <div className="flex-1 overflow-y-auto px-6 py-3">
+    <Modal title="Dismissed charges" onClose={onClose} size="max-w-md">
+        <p className="border-b border-[#232b3b] px-5 pt-1 pb-3 text-sm text-slate-400">Charges you marked as not recurring. Restore one to see it again.</p>
+        <div className="flex-1 overflow-y-auto px-5 py-3">
           {isLoading ? (
-            <div className="flex justify-center py-10">
-              <div className="h-6 w-6 animate-spin rounded-full border-4 border-indigo-500 border-t-transparent" />
-            </div>
+            <Spinner large />
           ) : dismissed.length === 0 ? (
-            <p className="py-6 text-center text-sm text-slate-500">Nothing dismissed.</p>
+            <p className="py-6 text-center text-sm text-slate-400">Nothing dismissed.</p>
           ) : (
             <div className="space-y-1">
               {error && (
-                <p className="mb-2 text-[0.68rem]" style={{ color: EXPENSE }}>
+                <p className="mb-2 text-xs text-red-400" role="alert">
                   Couldn't restore that — the request failed. Try again.
                 </p>
               )}
@@ -208,42 +168,20 @@ function ManageDismissedDialog({ onClose }: { onClose: () => void }) {
                   <span className="min-w-0 flex-1 truncate text-sm text-slate-200">{d.merchantKey}</span>
                   <button
                     onClick={() => restore(d.merchantKey)}
-                    className="shrink-0 rounded border border-slate-700 px-2 py-0.5 text-[0.65rem] text-slate-400 hover:bg-[#232b3b]"
+                    className={`${BUTTON_SMALL} shrink-0`}
                   >
-                    Undo
+                    Restore
                   </button>
                 </div>
               ))}
             </div>
           )}
         </div>
-        <div className="border-t border-[#232b3b] px-6 py-4">
-          <button
-            onClick={onClose}
-            className="rounded-lg border border-slate-700 px-4 py-1.5 text-sm text-slate-300 hover:bg-[#232b3b]"
-          >
+        <div className="flex justify-end border-t border-[#232b3b] px-5 py-3">
+          <button onClick={onClose} className={BUTTON_SECONDARY}>
             Done
           </button>
         </div>
-      </div>
-    </div>
-  )
-}
-
-function Kpi({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-xl border border-[#232b3b] bg-[#1a1f2e] px-4 py-3.5">
-      <div className="mb-1.5 text-[0.68rem] uppercase tracking-wider text-slate-600">{label}</div>
-      <div className="text-xl font-bold tabular-nums">{value}</div>
-    </div>
-  )
-}
-
-function Panel({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="mb-5 rounded-xl border border-[#232b3b] bg-[#1a1f2e] p-4 md:p-5">
-      <div className="mb-4 text-[0.7rem] font-bold uppercase tracking-wider text-slate-600">{title}</div>
-      {children}
-    </div>
+      </Modal>
   )
 }

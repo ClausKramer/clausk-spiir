@@ -5,10 +5,11 @@ import { getBankAccounts, deleteBankAccount, renameBankAccount, importCsv, syncA
 import { recategorize } from '../api/transactions'
 import { syncDefaultCategories, clearLearnedRules } from '../api/categories'
 import { DuplicatesDialog } from '../components/DuplicatesDialog'
+import { BUTTON_PRIMARY, BUTTON_SECONDARY, BUTTON_SMALL, EmptyState, INPUT, LoadError, Notice, PageHeader, Panel, Spinner } from '../components/ui'
 
 export function AccountsPage() {
   const qc = useQueryClient()
-  const { data: accounts = [], isLoading } = useQuery({
+  const { data: accounts = [], isLoading, isError, refetch, isRefetching } = useQuery({
     queryKey: ['accounts'],
     queryFn: getBankAccounts,
   })
@@ -30,6 +31,7 @@ export function AccountsPage() {
   const { mutate: doDelete, isPending: deleting } = useMutation({
     mutationFn: deleteBankAccount,
     onSuccess: () => qc.invalidateQueries({ queryKey: ['accounts'] }),
+    onError: () => setStatusMessage("Couldn't remove that account. Nothing was changed."),
   })
 
   const { mutate: doSync, isPending: syncing } = useMutation({
@@ -67,121 +69,107 @@ export function AccountsPage() {
     onError: () => setStatusMessage('Could not clear learned rules. Please try again.'),
   })
 
+  const hasAccounts = accounts.length > 0
+
   return (
-    <div className="min-h-screen bg-slate-50">
-      <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center gap-4">
-        <Link to="/dashboard" className="text-slate-500 hover:text-slate-700 text-sm">← Dashboard</Link>
-        <span className="text-lg font-semibold text-slate-800">Bank accounts</span>
-      </header>
-
-      <main className="mx-auto max-w-3xl px-6 py-8 space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className="text-sm text-slate-500">
-            {accounts.length} connected account{accounts.length !== 1 ? 's' : ''}
-          </p>
-          <Link
-            to="/accounts/connect"
-            className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
-          >
-            + Add bank
+    <div className="max-w-3xl">
+      <PageHeader
+        title="Accounts"
+        sub={isLoading || isError ? undefined : `${accounts.length} connected account${accounts.length !== 1 ? 's' : ''}`}
+        aside={
+          <Link to="/accounts/connect" className={BUTTON_PRIMARY}>
+            Add bank
           </Link>
-        </div>
+        }
+      />
 
-        {/* Grouped by what each action touches: the first row brings transactions in, the second
-            reorganises the ones already stored. */}
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <p className="mb-3 text-[0.7rem] font-semibold uppercase tracking-wider text-slate-400">Transaction data</p>
-          <div className="flex flex-wrap gap-2">
-            <button
-              onClick={() => doSync(false)}
-              disabled={syncing || accounts.length === 0}
-              className="rounded-lg bg-slate-700 px-3.5 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-40"
-              title="Fetch transactions added since the last sync"
-            >
-              {syncing ? 'Syncing…' : 'Sync all'}
-            </button>
-            <button
-              onClick={() => {
-                if (confirm('Fetch the oldest transactions each bank still offers? This can take a while, and banks usually stop offering full history some time after you connect the account.')) doSync(true)
-              }}
-              disabled={syncing || accounts.length === 0}
-              className="rounded-lg border border-slate-300 px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-40"
-              title="Fetch as far back as each bank allows, not just what's new"
-            >
-              Fetch full history
-            </button>
+      {statusMessage && <Notice onDismiss={() => setStatusMessage(null)}>{statusMessage}</Notice>}
 
-            <span className="mx-1 w-px self-stretch bg-slate-200" aria-hidden />
-
-            <button
-              onClick={() => doRecategorize()}
-              disabled={recategorizing || accounts.length === 0}
-              className="rounded-lg border border-slate-300 px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-40"
-              title="Re-run categorization on transactions that are still uncategorized"
-            >
-              {recategorizing ? 'Categorizing…' : 'Recategorize'}
-            </button>
-            <button
-              onClick={() => setFindingDuplicates(true)}
-              className="rounded-lg border border-slate-300 px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
-              title="Find transactions recorded twice, e.g. from a CSV import overlapping a bank sync"
-            >
-              Find duplicates
-            </button>
-            <button
-              onClick={() => {
-                if (confirm('Clear all rules learned from your corrections? Default rules and existing categories are kept.')) doClearRules()
-              }}
-              disabled={clearingRules}
-              className="rounded-lg px-3.5 py-2 text-sm font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-40"
-              title="Remove rules learned from your corrections, e.g. if one turned out too broad"
-            >
-              {clearingRules ? 'Clearing…' : 'Clear learned rules'}
-            </button>
-          </div>
-        </div>
-
-        {statusMessage && (
-          <div className="flex items-start justify-between gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 shadow-sm">
-            <span>{statusMessage}</span>
-            <button onClick={() => setStatusMessage(null)} className="shrink-0 text-slate-400 hover:text-slate-600" aria-label="Dismiss">
-              ✕
-            </button>
-          </div>
-        )}
-
-        {isLoading ? (
-          <div className="flex justify-center py-12">
-            <div className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-600 border-t-transparent" />
-          </div>
-        ) : accounts.length === 0 ? (
-          <div className="rounded-xl bg-white border border-slate-100 p-12 text-center shadow-sm">
-            <div className="text-4xl mb-3">🏦</div>
-            <p className="font-medium text-slate-700">No bank accounts yet</p>
-            <p className="mt-1 text-sm text-slate-400">Add your first bank to start syncing transactions.</p>
-            <Link
-              to="/accounts/connect"
-              className="mt-4 inline-block rounded-lg bg-indigo-600 px-5 py-2 text-sm font-medium text-white hover:bg-indigo-700"
-            >
+      {isLoading ? (
+        <Spinner large />
+      ) : isError ? (
+        <LoadError what="your accounts" onRetry={() => refetch()} retrying={isRefetching} />
+      ) : !hasAccounts ? (
+        <Panel title="No bank accounts yet">
+          <EmptyState title="Connect a bank to start tracking">
+            <p>Transactions are read from your bank, and never changed there.</p>
+            <Link to="/accounts/connect" className={`${BUTTON_PRIMARY} mt-4`}>
               Connect a bank
             </Link>
-          </div>
-        ) : (
-          <div className="rounded-xl bg-white border border-slate-100 shadow-sm divide-y divide-slate-100">
+          </EmptyState>
+        </Panel>
+      ) : (
+        <>
+          <div className="mb-4 divide-y divide-[#232b3b] rounded-xl border border-[#232b3b] bg-[#1a1f2e]">
             {accounts.map((acc) => (
               <AccountRow key={acc.id} account={acc} onDelete={() => doDelete(acc.id)} deleting={deleting} />
             ))}
           </div>
-        )}
 
-        {findingDuplicates && (
-          <DuplicatesDialog
-            accountNameById={accountNameById}
-            onClose={() => setFindingDuplicates(false)}
-            onDone={setStatusMessage}
-          />
-        )}
-      </main>
+          {/* Grouped by what each action touches: the first brings transactions in, the second
+              reorganises the ones already stored. */}
+          <Panel title="Get new transactions">
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => doSync(false)}
+                disabled={syncing}
+                className={BUTTON_PRIMARY}
+                title="Fetch transactions added since the last sync"
+              >
+                {syncing ? 'Syncing…' : 'Sync all'}
+              </button>
+              <button
+                onClick={() => {
+                  if (confirm('Fetch the oldest transactions each bank still offers? This can take a while, and banks usually stop offering full history some time after you connect the account.')) doSync(true)
+                }}
+                disabled={syncing}
+                className={BUTTON_SECONDARY}
+                title="Fetch as far back as each bank allows, not just what's new"
+              >
+                Fetch full history
+              </button>
+            </div>
+          </Panel>
+
+          <Panel title="Tidy up what's stored">
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => doRecategorize()}
+                disabled={recategorizing}
+                className={BUTTON_SECONDARY}
+                title="Re-run categorization on transactions that are still uncategorized"
+              >
+                {recategorizing ? 'Categorizing…' : 'Recategorize'}
+              </button>
+              <button
+                onClick={() => setFindingDuplicates(true)}
+                className={BUTTON_SECONDARY}
+                title="Find transactions recorded twice, e.g. from a CSV import overlapping a bank sync"
+              >
+                Find duplicates
+              </button>
+              <button
+                onClick={() => {
+                  if (confirm('Clear all rules learned from your corrections? Default rules and existing categories are kept.')) doClearRules()
+                }}
+                disabled={clearingRules}
+                className={BUTTON_SECONDARY}
+                title="Remove rules learned from your corrections, e.g. if one turned out too broad"
+              >
+                {clearingRules ? 'Clearing…' : 'Clear learned rules'}
+              </button>
+            </div>
+          </Panel>
+        </>
+      )}
+
+      {findingDuplicates && (
+        <DuplicatesDialog
+          accountNameById={accountNameById}
+          onClose={() => setFindingDuplicates(false)}
+          onDone={setStatusMessage}
+        />
+      )}
     </div>
   )
 }
@@ -235,9 +223,9 @@ function AccountRow({ account, onDelete, deleting }: { account: BankAccount; onD
   }
 
   return (
-    <div className="px-6 py-4">
-      <div className="flex items-center justify-between">
-        <div className="min-w-0">
+    <div className="px-4 py-3.5">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2.5">
+        <div className="min-w-0 flex-1 basis-56">
           {editing ? (
             <form
               onSubmit={(e) => { e.preventDefault(); submit() }}
@@ -246,31 +234,31 @@ function AccountRow({ account, onDelete, deleting }: { account: BankAccount; onD
               <input
                 autoFocus
                 value={name}
+                aria-label="Account name"
                 onChange={(e) => setName(e.target.value)}
                 onBlur={submit}
                 onKeyDown={(e) => { if (e.key === 'Escape') { setEditing(false); setName(account.name) } }}
                 disabled={renaming}
-                className="rounded border border-indigo-300 px-2 py-1 text-sm font-medium text-slate-800 outline-none focus:ring-2 focus:ring-indigo-200"
+                className={`${INPUT} w-full font-medium`}
               />
             </form>
           ) : (
             <button
               onClick={() => setEditing(true)}
-              className="group flex items-center gap-1.5 font-medium text-slate-800 hover:text-indigo-600"
+              className="text-left font-medium break-words text-slate-100 underline decoration-slate-600 decoration-dotted underline-offset-4 hover:text-indigo-300"
               title="Rename account"
             >
               {account.name}
-              <span className="text-xs text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity">✎</span>
             </button>
           )}
-          {account.iban && <p className="text-xs text-slate-400 mt-0.5">{account.iban}</p>}
+          {account.iban && <p className="mt-0.5 text-xs break-all text-slate-400">{account.iban}</p>}
           <p className="text-xs text-slate-400">
             {account.lastSyncedAt
               ? `Last synced ${new Date(account.lastSyncedAt).toLocaleDateString('da-DK')}`
               : 'Never synced'}
           </p>
         </div>
-        <div className="flex items-center gap-3 shrink-0">
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
           <input
             ref={fileInputRef}
             type="file"
@@ -280,7 +268,7 @@ function AccountRow({ account, onDelete, deleting }: { account: BankAccount; onD
           />
           <Link
             to={`/accounts/${account.id}/transactions`}
-            className="text-sm text-indigo-600 hover:text-indigo-800"
+            className={BUTTON_SMALL}
             title="View all transactions for this account"
           >
             Transactions
@@ -288,15 +276,15 @@ function AccountRow({ account, onDelete, deleting }: { account: BankAccount; onD
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={importing}
-            className="text-sm text-slate-500 hover:text-slate-700 disabled:opacity-40"
+            className={BUTTON_SMALL}
             title="Import older transactions from a CSV file"
           >
             {importing ? 'Importing…' : 'Import CSV'}
           </button>
           <button
-            onClick={() => { if (confirm('Remove this account and all its transactions?')) onDelete() }}
+            onClick={() => { if (confirm(`Remove “${account.name}” and all its transactions? This can't be undone.`)) onDelete() }}
             disabled={deleting}
-            className="text-sm text-red-500 hover:text-red-700 disabled:opacity-40"
+            className={`${BUTTON_SMALL} !border-red-900 !text-red-300 enabled:hover:!bg-red-950`}
           >
             Remove
           </button>
@@ -304,10 +292,10 @@ function AccountRow({ account, onDelete, deleting }: { account: BankAccount; onD
       </div>
 
       {importResult && (
-        <div className="mt-3 rounded-lg bg-green-50 border border-green-200 px-3 py-2 text-xs text-green-700">
+        <div className="mt-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200" role="status">
           <p>{importResult.message}</p>
           {importResult.errors.length > 0 && (
-            <ul className="mt-1 list-disc pl-4 text-amber-700">
+            <ul className="mt-1 list-disc pl-4 text-amber-200">
               {importResult.errors.slice(0, 5).map((e, i) => <li key={i}>{e}</li>)}
               {importResult.errors.length > 5 && <li>…and {importResult.errors.length - 5} more.</li>}
             </ul>
@@ -315,7 +303,7 @@ function AccountRow({ account, onDelete, deleting }: { account: BankAccount; onD
         </div>
       )}
       {importError && (
-        <div className="mt-3 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
+        <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300" role="alert">
           {importError}
         </div>
       )}

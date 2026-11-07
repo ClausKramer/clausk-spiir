@@ -12,6 +12,14 @@ public static class SyncEndpoints
     // without customer interaction. We enforce a minimum gap between syncs to stay under that.
     private static readonly TimeSpan MinSyncGap = TimeSpan.FromHours(5);
 
+    // Reading a balance is a second AISP access, charged against the same daily cap as the
+    // transaction fetch beside it, so it deliberately runs on a slower clock than the sync: at
+    // this gap a sync costs two accesses twice a day and one access the rest of the time, instead
+    // of doubling every sync's cost. A balance that is a few hours stale is still worth far more
+    // than the running transaction sum it replaces, and the account page can always ask for a
+    // fresh one — that request comes from the account holder, so the unattended cap doesn't bind.
+    private static readonly TimeSpan MinBalanceGap = TimeSpan.FromHours(12);
+
     public static IEndpointRouteBuilder MapSyncEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/sync").WithTags("Sync").RequireAuthorization();
@@ -36,7 +44,7 @@ public static class SyncEndpoints
 
         var logger = loggerFactory.CreateLogger("Sync");
         var now = DateTime.UtcNow;
-        int synced = 0, skipped = 0, totalNew = 0;
+        int synced = 0, skipped = 0, totalNew = 0, balancesUpdated = 0;
 
         foreach (var account in accounts)
         {
@@ -103,6 +111,31 @@ public static class SyncEndpoints
 
                 totalNew += newTx.Count;
                 synced++;
+
+                // Best-effort and in its own try: the transactions above are already committed, so
+                // letting a balance failure escape would skip the LastSyncedAt write and make the
+                // next sync re-fetch everything it just imported.
+                if (!account.BalanceFetchedAt.HasValue || now - account.BalanceFetchedAt.Value >= MinBalanceGap)
+                {
+                    try
+                    {
+                        var balance = await eb.GetBalanceAsync(account.ExternalAccountId, ct);
+                        if (balance is not null)
+                        {
+                            await bankAccounts.UpdateBalanceAsync(
+                                userId, account.Id, balance.Amount, balance.Currency,
+                                balance.BalanceType, balance.ReferenceDate, now, ct);
+                            balancesUpdated++;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        // The last balance we stored stays as it is, with its own timestamp saying
+                        // how old it is. Overwriting it with nothing would turn a stale figure into
+                        // no figure, which is worse.
+                        logger.LogWarning(ex, "Failed to read balance for account {Id}", account.Id);
+                    }
+                }
             }
             catch (Exception ex)
             {
@@ -121,6 +154,7 @@ public static class SyncEndpoints
             synced,
             skipped,
             newTransactions = totalNew,
+            balancesUpdated,
             excludedPlanned,
             message = $"Synced {synced} account(s), added {totalNew} transaction(s)."
                       + (excludedPlanned > 0 ? $" Excluded {excludedPlanned} planned payment(s) now settled." : ""),

@@ -141,6 +141,7 @@ public static class NetWorthEndpoints
     private static async Task<IResult> GetEntryForm(
         NetWorthRepository repo,
         TransactionRepository transactions,
+        BankAccountRepository bankAccounts,
         ICurrentUser currentUser,
         int? year = null,
         int? month = null,
@@ -157,32 +158,71 @@ public static class NetWorthEndpoints
             .ToDictionary(p => p.NetWorthAccountId, p => p.Value);
         var previous = await repo.GetLatestValuesAsync(userId, y, m, ct);
 
-        // For a linked account, what our own transaction history says the balance is — a
-        // suggestion only, and deliberately labelled as such: it is a running sum of whatever
-        // history the bank served, which is not the same thing as the balance.
+        // What to prefill a linked account's box with — a suggestion either way, but the two
+        // possible sources are not equally good and the form says which one it used.
+        //
+        // The bank's own balance is the better figure when it applies, because it is the whole
+        // balance rather than the part our transaction history happens to cover. It only applies
+        // when the figure actually describes the month being recorded, though: this form is
+        // normally opened on the 5th to record the month just finished, and a balance read on the
+        // 5th of November is not October's closing balance — a salary and a rent payment have
+        // landed since. So the balance is offered only when its own date falls inside the month,
+        // which is the case when the account was synced at month end, and otherwise the running
+        // transaction sum (computed as at month end) is the more honest starting point.
+        var monthStart = new DateOnly(y, m, 1);
         var asOf = new DateOnly(y, m, DateTime.DaysInMonth(y, m));
         var linked = accounts.Where(a => a.BankAccountId is not null).ToList();
-        var computed = new Dictionary<Guid, decimal>();
+
+        var bankAccountsById = linked.Count == 0
+            ? new Dictionary<Guid, BankAccount>()
+            : (await bankAccounts.GetAllForUserAsync(userId, ct)).ToDictionary(a => a.Id);
+
+        var suggestions = new Dictionary<Guid, (decimal Value, string Source, DateOnly AsOf)>();
         foreach (var account in linked)
         {
-            computed[account.Id] = await transactions.GetNetBalanceAsync(
+            var bankAccount = bankAccountsById.GetValueOrDefault(account.BankAccountId!.Value);
+
+            // The date the stored balance describes: the bank's own reference date when it gave
+            // one, otherwise the day we read it.
+            DateOnly? balanceDate = bankAccount?.BalanceReferenceDate;
+            if (balanceDate is null && bankAccount?.BalanceFetchedAt is { } fetched)
+                balanceDate = DateOnly.FromDateTime(fetched);
+
+            if (bankAccount?.Balance is { } balance && balanceDate is { } date
+                && date >= monthStart && date <= asOf)
+            {
+                suggestions[account.Id] = (balance, "bank", date);
+                continue;
+            }
+
+            var sum = await transactions.GetNetBalanceAsync(
                 userId, [account.BankAccountId!.Value], asOf, ct);
+            suggestions[account.Id] = (sum, "transactions", asOf);
         }
 
         return TypedResults.Ok(new
         {
             year = y,
             month = m,
-            items = accounts.Select(a => new
+            items = accounts.Select(a =>
             {
-                a.Id,
-                a.Name,
-                a.Kind,
-                a.IsLiability,
-                a.Currency,
-                value = current.TryGetValue(a.Id, out var v) ? v : (decimal?)null,
-                previousValue = previous.TryGetValue(a.Id, out var p) ? p : (decimal?)null,
-                suggestedValue = computed.TryGetValue(a.Id, out var c) ? c : (decimal?)null,
+                var hasSuggestion = suggestions.TryGetValue(a.Id, out var suggestion);
+                return new
+                {
+                    a.Id,
+                    a.Name,
+                    a.Kind,
+                    a.IsLiability,
+                    a.Currency,
+                    value = current.TryGetValue(a.Id, out var v) ? v : (decimal?)null,
+                    previousValue = previous.TryGetValue(a.Id, out var p) ? p : (decimal?)null,
+                    suggestedValue = hasSuggestion ? suggestion.Value : (decimal?)null,
+                    // "bank" (the balance the bank reported) or "transactions" (our running sum).
+                    // The form labels these differently on purpose: one is the account's balance,
+                    // the other is an estimate of it, and the user is recording the figure.
+                    suggestedSource = hasSuggestion ? suggestion.Source : null,
+                    suggestedAsOf = hasSuggestion ? suggestion.AsOf : (DateOnly?)null,
+                };
             }),
         });
     }

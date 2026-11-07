@@ -13,6 +13,11 @@ interface Props {
 
 const kr = (n: number) => Math.round(n).toLocaleString('da-DK')
 
+// A suggestion without its date is a claim about an unspecified moment, which is the one thing a
+// figure being recorded into a permanent monthly history should never be.
+const asOfLabel = (asOf: string | null) =>
+  asOf ? `, as at ${new Date(asOf).toLocaleDateString('da-DK')}` : ''
+
 // The monthly valuation form: every account, one number each.
 //
 // Each box starts from the last figure recorded for that account rather than empty. Most of
@@ -120,9 +125,18 @@ export function NetWorthEntryDialog({ year: initialYear, month: initialMonth, on
                   type="button"
                   onClick={() => setEdits((v) => ({ ...v, [item.id]: String(Math.round(item.suggestedValue!)) }))}
                   className="text-indigo-400 hover:underline"
-                  title="What this app's own transaction history sums to — a suggestion, not the bank's balance"
+                  // The two sources are not equally good, so they don't get the same label. A
+                  // bank balance is the account's balance; a transaction sum is an estimate of it
+                  // that stops wherever the served history stops. Saying "bank" over both would
+                  // lend the estimate an authority it hasn't got.
+                  title={
+                    item.suggestedSource === 'bank'
+                      ? `The balance the bank reported for ${item.name}${asOfLabel(item.suggestedAsOf)} — still yours to confirm`
+                      : `What this app's own transaction history sums to${asOfLabel(item.suggestedAsOf)} — an estimate, not the bank's balance`
+                  }
                 >
                   use {kr(item.suggestedValue)}
+                  {item.suggestedSource === 'bank' && <span className="text-slate-500"> (bank)</span>}
                 </button>
               </>
             )}

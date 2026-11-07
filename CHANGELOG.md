@@ -6,6 +6,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **The bank's own account balance.** Until now the app could not say what was actually in an
+  account. Every "balance" on screen was `GetNetBalanceAsync` — a running sum of the transactions
+  we hold — which is only ever as complete as the history the bank agreed to serve, hence the
+  dashboard's "net balance (tracked)" and the net worth form calling its prefill a suggestion.
+  `0007_NetWorth.sql` had already named the right authority ("the bank's own balance is the
+  authority, not our running total"); there was no column to put it in. Now there is:
+  `IEnableBankingClient.GetBalanceAsync` reads `GET /accounts/{uid}/balances` and the figure is
+  stored on `BankAccounts` (`Schema/0013_AccountBalances.sql`), shown on the accounts page, and
+  used to prefill the monthly net worth entry.
+  - **Booked, not available, where the bank offers both.** An account reports several balances at
+    once and they answer different questions: a booked balance (`CLBD`/`ITBD`/`PRCD`) counts
+    settled money, while an available one can fold in an overdraft facility and entries still in
+    flight. Booked is preferred because transactions are imported from `BOOK` entries only, so the
+    balance and the stored history then describe the same money. Among booked figures the choice
+    follows our own preference order rather than the bank's listing order, so a bank putting an
+    interim balance first can't decide for us. An available balance is used only when nothing else
+    is reported, and is labelled as such rather than quietly standing in.
+  - **Two dates, because they disagree.** `BalanceReferenceDate` is the date the bank says the
+    figure describes; `BalanceFetchedAt` is when we read it. A single "as of" would let a figure
+    fetched this morning that describes yesterday be presented as current, which is the whole
+    failure this feature exists to avoid. Every place a balance is shown shows its date.
+  - **Kept inside the PSD2 budget.** A balance read is a second AISP access charged against the
+    same ~4/day unattended cap as the transaction fetch beside it, so sync reads balances on a
+    12-hour gap rather than doubling the cost of every 5-hour sync. `POST
+    /accounts/{id}/refresh-balance` deliberately has no gap: the cap governs polling with nobody
+    present, and that request is the account holder asking. A balance failure is caught separately
+    from the sync so it cannot cost the transactions just imported, and a failed read leaves the
+    previous figure and its timestamp alone — turning a stale balance into no balance is worse.
+  - **Net worth suggestions only use the balance when it describes the month being recorded.** The
+    entry form is normally opened on the 5th to record the month just finished, and a balance read
+    on 5 November is not October's closing balance — a salary and a rent payment have landed since.
+    So the bank figure is offered only when its own date falls inside the month (true when the
+    account was synced at month end) and the transaction sum, computed as at month end, is used
+    otherwise. The form says which source it used; the recorded snapshot still always wins.
+
 ### Fixed
 - **Spending inflated by planned payments and uncounted transfers.**
   - Banks list a scheduled payment days before it happens and later re-issue it as a booked entry

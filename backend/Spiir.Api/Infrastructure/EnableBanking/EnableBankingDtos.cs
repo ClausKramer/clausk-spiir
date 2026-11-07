@@ -77,3 +77,22 @@ public record PartyDto(
 public record AmountDto(
     [property: JsonPropertyName("amount")] string Amount,
     [property: JsonPropertyName("currency")] string Currency);
+
+// Balances
+public record BalancesResponse(
+    [property: JsonPropertyName("balances")] List<BalanceDto>? Balances);
+
+// An account reports several balances at once and they are not interchangeable: a booked balance
+// counts only what has settled, while an available one can include an overdraft facility and
+// entries still in flight. Every field is nullable because PSD2 leaves most of them optional and
+// ASPSPs differ over which they send — a missing one must cost us that balance, not the batch.
+public record BalanceDto(
+    // Human-readable label the bank chose, e.g. "Booked balance". Informational only; the code
+    // keys off balance_type, which is a controlled vocabulary.
+    [property: JsonPropertyName("name")] string? Name,
+    [property: JsonPropertyName("balance_amount")] AmountDto? BalanceAmount,
+    // ISO 20022 code: CLBD closing booked, ITBD interim booked, PRCD previously closed booked,
+    // CLAV closing available, ITAV interim available, XPCD expected, FWAV forward available.
+    [property: JsonPropertyName("balance_type")] string? BalanceType,
+    [property: JsonPropertyName("reference_date")] string? ReferenceDate,
+    [property: JsonPropertyName("last_change_date_time")] string? LastChangeDateTime);

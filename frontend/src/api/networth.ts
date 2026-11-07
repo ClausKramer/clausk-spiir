@@ -82,8 +82,16 @@ export interface EntryForm {
     value: number | null
     // The last figure recorded before this month — the starting point for the form.
     previousValue: number | null
-    // For a linked bank account, what our own transaction history sums to. A suggestion only.
+    // For a linked bank account, a figure to start from. A suggestion only — the recorded
+    // snapshot always wins.
     suggestedValue: number | null
+    // Where that suggestion came from, which decides how it is labelled. 'bank' is the balance
+    // the bank reported, offered only when its own date falls inside the month being recorded.
+    // 'transactions' is our running sum as at month end — an estimate, since it covers only the
+    // history the bank served.
+    suggestedSource: 'bank' | 'transactions' | null
+    // The date the suggestion describes.
+    suggestedAsOf: string | null
   }[]
 }
 

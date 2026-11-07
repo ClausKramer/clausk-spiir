@@ -99,6 +99,10 @@ interaction, so sync stays:
 3. **Cached locally** — all UI queries hit the local database; no live Enable Banking calls in the read path.
 4. **`IEnableBankingClient`** (`Infrastructure/EnableBanking/`) is implemented but untested against a real
    bank connection — no application has been registered with Enable Banking yet.
+5. **Balances are a second AISP access** against the same cap, so `GetBalanceAsync` runs on a 12-hour
+   gap inside sync rather than on every sync. `POST /accounts/{id}/refresh-balance` has no gap: the cap
+   governs unattended polling, and that request is the account holder asking for their own balance.
+   The read path is still local-only — the stored `BankAccounts.Balance` is what the UI shows.
 
 ## Azure deployment
 
@@ -149,6 +153,7 @@ Vite proxies all `/api/…` requests to `http://localhost:5218`.
 | Item | Status |
 |------|--------|
 | `IEnableBankingClient` implementation | Implemented, untested live — needs ApplicationId/PrivateKey in user-secrets locally, Key Vault in Azure |
+| `GetBalanceAsync` / account balances | Implemented, untested live. The response shape (`balance_amount`, `balance_type`, `reference_date`) comes from Enable Banking's documented examples, not from a verified call — check the field names against a real response the first time a bank is connected. Every field is nullable and an unparseable balance is skipped, so a mismatch degrades to "no balance" rather than a failed sync. |
 | Real email delivery | `ResendEmailSender`, implemented but untested live — needs `Resend:ApiKey` in user-secrets locally, Key Vault in Azure. Falls back to `DevConsoleSender` until then. |
 | Passkeys / WebAuthn | `IPasswordlessAuthenticator` is the extension point |
 | Bank account connection UI | `/accounts/connect` flow (Enable Banking authorization) |

@@ -22,8 +22,35 @@ public interface IEnableBankingClient
     /// </param>
     Task<IReadOnlyList<EnableBankingTransaction>> GetTransactionsAsync(
         string accountUid, DateOnly? dateFrom = null, bool longestHistory = false, CancellationToken ct = default);
+
+    /// <summary>
+    /// Reads the account's balance from the bank: the figure a statement shows, as opposed to the
+    /// running sum of whatever transaction history this app managed to fetch.
+    /// </summary>
+    /// <remarks>
+    /// An account reports several balances at once. This returns the one that best matches how
+    /// transactions are imported — booked, so the balance and the stored history describe the same
+    /// settled universe — falling back to an available balance when the bank reports no booked
+    /// one. Returns null when the bank reports no balance we can read, which is not an error:
+    /// PSD2 makes nearly every field optional.
+    ///
+    /// This spends one AISP access against the PSD2 cap, the same as a transaction fetch. See the
+    /// callers in SyncEndpoints and AccountEndpoints for how that budget is kept.
+    /// </remarks>
+    Task<EnableBankingBalance?> GetBalanceAsync(string accountUid, CancellationToken ct = default);
 }
 
 public record EnableBankingSession(string SessionId, IReadOnlyList<EnableBankingAccount> Accounts);
 public record EnableBankingAccount(string Uid, string? Iban, string? Name, string Currency);
 public record EnableBankingTransaction(string TransactionId, DateOnly BookingDate, decimal Amount, string Currency, string Description);
+
+/// <param name="Amount">Signed as the bank reports it — negative when the account is overdrawn.</param>
+/// <param name="BalanceType">The ISO 20022 code the bank sent, kept so the UI can name which balance this is.</param>
+/// <param name="IsBooked">Whether <paramref name="BalanceType"/> is a settled (booked) figure rather than an available one.</param>
+/// <param name="ReferenceDate">The date the bank says the figure describes, when it says.</param>
+public record EnableBankingBalance(
+    decimal Amount,
+    string Currency,
+    string? BalanceType,
+    bool IsBooked,
+    DateOnly? ReferenceDate);

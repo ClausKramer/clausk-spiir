@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { getBankAccounts, deleteBankAccount, renameBankAccount, importCsv, syncAll, type BankAccount, type ImportCsvResult } from '../api/accounts'
+import { getBankAccounts, deleteBankAccount, renameBankAccount, importCsv, syncAll, refreshBalance, type BankAccount, type ImportCsvResult } from '../api/accounts'
 import { recategorize } from '../api/transactions'
 import { syncDefaultCategories, clearLearnedRules } from '../api/categories'
 import { DuplicatesDialog } from '../components/DuplicatesDialog'
@@ -186,6 +186,65 @@ export function AccountsPage() {
   )
 }
 
+// Balance types that describe settled money. The rest (available, expected, forward) can fold in
+// an overdraft facility or entries still in flight, so the row says which kind it is holding
+// rather than letting one stand in for the other.
+const BOOKED_BALANCE_TYPES = ['CLBD', 'ITBD', 'PRCD']
+
+const BALANCE_TYPE_LABELS: Record<string, string> = {
+  CLBD: 'Booked',
+  ITBD: 'Booked (interim)',
+  PRCD: 'Booked (previous close)',
+  CLAV: 'Available',
+  ITAV: 'Available (interim)',
+  XPCD: 'Expected',
+  FWAV: 'Forward available',
+}
+
+// The bank's own balance, shown with the two things that decide what it is worth: which balance
+// it is, and what moment it describes. A bare number here would read as "this is in the account
+// right now", which it can only honestly claim just after a sync.
+function AccountBalance({ account }: { account: BankAccount }) {
+  if (account.balance === null || account.balance === undefined) {
+    return <p className="text-xs text-slate-400">Balance not read yet — sync or refresh to fetch it</p>
+  }
+
+  const type = account.balanceType ?? ''
+  const isBooked = BOOKED_BALANCE_TYPES.includes(type)
+  const typeLabel = BALANCE_TYPE_LABELS[type] ?? (type || 'Balance')
+
+  // The reference date is what the figure describes; the fetch time is only how fresh our copy
+  // is. Prefer the former and fall back to the latter, because one of them is always the honest
+  // answer to "as at when?".
+  const asOf = account.balanceReferenceDate ?? account.balanceFetchedAt ?? null
+
+  const amount = account.balance.toLocaleString('da-DK', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })
+  const currency = account.balanceCurrency ?? account.currency
+
+  return (
+    <p className="mt-1 text-sm">
+      <span className={`font-semibold tabular-nums ${account.balance < 0 ? 'text-red-600' : 'text-slate-800'}`}>
+        {amount} {currency}
+      </span>
+      <span className="ml-2 text-xs text-slate-400">
+        {typeLabel}
+        {!isBooked && type && ' — may include unsettled entries'}
+        {asOf && ` · as at ${new Date(asOf).toLocaleDateString('da-DK')}`}
+      </span>
+      {/* A balance reported in a currency other than the account's is a real difference, not a
+          display quirk, so it is called out rather than quietly formatted away. */}
+      {account.balanceCurrency && account.balanceCurrency !== account.currency && (
+        <span className="ml-2 text-xs text-amber-600">
+          reported in {account.balanceCurrency}, account is {account.currency}
+        </span>
+      )}
+    </p>
+  )
+}
+
 function AccountRow({ account, onDelete, deleting }: { account: BankAccount; onDelete: () => void; deleting: boolean }) {
   const qc = useQueryClient()
   const [editing, setEditing] = useState(false)
@@ -193,6 +252,24 @@ function AccountRow({ account, onDelete, deleting }: { account: BankAccount; onD
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [importResult, setImportResult] = useState<ImportCsvResult | null>(null)
   const [importError, setImportError] = useState<string | null>(null)
+  const [balanceError, setBalanceError] = useState<string | null>(null)
+
+  const { mutate: doRefreshBalance, isPending: refreshingBalance } = useMutation({
+    mutationFn: () => refreshBalance(account.id),
+    onSuccess: () => {
+      setBalanceError(null)
+      qc.invalidateQueries({ queryKey: ['accounts'] })
+      // The net worth entry form prefills from this balance, so a fresh figure should reach it
+      // without a reload.
+      qc.invalidateQueries({ queryKey: ['networth-entry'] })
+    },
+    onError: (err: unknown) => {
+      setBalanceError(
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+          ?? 'Could not read the balance from the bank.',
+      )
+    },
+  })
 
   const { mutate: doRename, isPending: renaming } = useMutation({
     mutationFn: (newName: string) => renameBankAccount(account.id, newName),
@@ -269,6 +346,7 @@ function AccountRow({ account, onDelete, deleting }: { account: BankAccount; onD
               ? `Last synced ${new Date(account.lastSyncedAt).toLocaleDateString('da-DK')}`
               : 'Never synced'}
           </p>
+          <AccountBalance account={account} />
         </div>
         <div className="flex items-center gap-3 shrink-0">
           <input
@@ -285,6 +363,14 @@ function AccountRow({ account, onDelete, deleting }: { account: BankAccount; onD
           >
             Transactions
           </Link>
+          <button
+            onClick={() => doRefreshBalance()}
+            disabled={refreshingBalance}
+            className="text-sm text-slate-500 hover:text-slate-700 disabled:opacity-40"
+            title="Ask the bank for this account's balance now"
+          >
+            {refreshingBalance ? 'Reading…' : 'Refresh balance'}
+          </button>
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={importing}
@@ -317,6 +403,11 @@ function AccountRow({ account, onDelete, deleting }: { account: BankAccount; onD
       {importError && (
         <div className="mt-3 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
           {importError}
+        </div>
+      )}
+      {balanceError && (
+        <div className="mt-3 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
+          {balanceError}
         </div>
       )}
     </div>

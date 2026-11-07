@@ -5,12 +5,19 @@ namespace Spiir.Api.Data.Repositories;
 
 public class BankAccountRepository(IDbConnectionFactory connectionFactory)
 {
+    // Listed once rather than per query so a column added to the entity can't be left out of one
+    // of the two reads — which is how an account would come back with its balance silently null.
+    private const string Columns = """
+        Id, UserId, ExternalAccountId, Iban, Name, Currency, LastSyncedAt, CreatedAt,
+        Balance, BalanceCurrency, BalanceType, BalanceReferenceDate, BalanceFetchedAt
+        """;
+
     public async Task<IReadOnlyList<BankAccount>> GetAllForUserAsync(Guid userId, CancellationToken ct = default)
     {
         using var conn = await connectionFactory.CreateOpenConnectionAsync(ct);
         var rows = await conn.QueryAsync<BankAccount>(
-            """
-            SELECT Id, UserId, ExternalAccountId, Iban, Name, Currency, LastSyncedAt, CreatedAt
+            $"""
+            SELECT {Columns}
             FROM BankAccounts
             WHERE UserId = @userId
             """,
@@ -22,8 +29,8 @@ public class BankAccountRepository(IDbConnectionFactory connectionFactory)
     {
         using var conn = await connectionFactory.CreateOpenConnectionAsync(ct);
         return await conn.QuerySingleOrDefaultAsync<BankAccount>(
-            """
-            SELECT Id, UserId, ExternalAccountId, Iban, Name, Currency, LastSyncedAt, CreatedAt
+            $"""
+            SELECT {Columns}
             FROM BankAccounts
             WHERE UserId = @userId AND Id = @id
             """,
@@ -68,6 +75,35 @@ public class BankAccountRepository(IDbConnectionFactory connectionFactory)
         await conn.ExecuteAsync(
             "UPDATE BankAccounts SET LastSyncedAt = @syncedAt WHERE UserId = @userId AND Id = @id",
             new { userId, id, syncedAt });
+    }
+
+    /// <summary>
+    /// Records the balance the bank reported, with both the date it describes and the moment it
+    /// was read. Scoped by userId like every other tenant-touching method here — there is no
+    /// global filter catching a missed one.
+    /// </summary>
+    public async Task UpdateBalanceAsync(
+        Guid userId,
+        Guid id,
+        decimal amount,
+        string currency,
+        string? balanceType,
+        DateOnly? referenceDate,
+        DateTime fetchedAt,
+        CancellationToken ct = default)
+    {
+        using var conn = await connectionFactory.CreateOpenConnectionAsync(ct);
+        await conn.ExecuteAsync(
+            """
+            UPDATE BankAccounts
+            SET Balance = @amount,
+                BalanceCurrency = @currency,
+                BalanceType = @balanceType,
+                BalanceReferenceDate = @referenceDate,
+                BalanceFetchedAt = @fetchedAt
+            WHERE UserId = @userId AND Id = @id
+            """,
+            new { userId, id, amount, currency, balanceType, referenceDate, fetchedAt });
     }
 
     public async Task<bool> RenameAsync(Guid userId, Guid id, string name, CancellationToken ct = default)

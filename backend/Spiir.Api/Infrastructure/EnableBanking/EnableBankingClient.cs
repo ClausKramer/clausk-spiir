@@ -107,6 +107,78 @@ public class EnableBankingClient(
         return all;
     }
 
+    public async Task<EnableBankingBalance?> GetBalanceAsync(string accountUid, CancellationToken ct = default)
+    {
+        var http = AuthenticatedClient();
+        var response = await http.GetFromJsonAsync<BalancesResponse>($"/accounts/{accountUid}/balances", ct);
+
+        var candidates = (response?.Balances ?? [])
+            .Select(ToBalance)
+            .OfType<EnableBankingBalance>()
+            .ToList();
+
+        if (candidates.Count == 0)
+        {
+            logger.LogInformation("Bank reported no readable balance for account {Account}.", accountUid);
+            return null;
+        }
+
+        // Prefer a booked balance, because transactions are imported from BOOK entries only
+        // (see IsBooked): a booked balance and the stored history then describe the same settled
+        // money, so comparing them is meaningful. An available balance answers a different
+        // question — it can fold in an overdraft facility and entries still in flight — so it is
+        // a fallback for banks that report nothing else, never a silent substitute.
+        //
+        // Among booked balances, take them in BookedBalanceTypes order rather than the bank's:
+        // a bank listing an interim figure before the closing one would otherwise decide for us.
+        var chosen = candidates
+                         .Where(b => b.IsBooked)
+                         .OrderBy(b => Array.IndexOf(BookedBalanceTypes, b.BalanceType ?? ""))
+                         .FirstOrDefault()
+                     ?? candidates[0];
+
+        if (!chosen.IsBooked)
+            logger.LogInformation(
+                "No booked balance for account {Account}; using {Type}, which may include unsettled entries.",
+                accountUid, chosen.BalanceType ?? "an untyped balance");
+
+        return chosen;
+    }
+
+    // Balance types that describe settled money, in the order we would rather have them. Anything
+    // outside this set (CLAV/ITAV available, XPCD expected, FWAV forward available) still counts
+    // as a balance, just not a booked one.
+    private static readonly string[] BookedBalanceTypes = ["CLBD", "ITBD", "PRCD"];
+
+    private static EnableBankingBalance? ToBalance(BalanceDto b)
+    {
+        // No amount means no balance. Skipping the entry rather than throwing keeps one odd
+        // balance in a bank's list from costing us the readable ones beside it.
+        if (b.BalanceAmount is null) return null;
+        if (!decimal.TryParse(b.BalanceAmount.Amount, NumberStyles.Number, CultureInfo.InvariantCulture, out var amount))
+            return null;
+
+        var type = string.IsNullOrWhiteSpace(b.BalanceType) ? null : b.BalanceType.Trim().ToUpperInvariant();
+        var isBooked = type is not null && BookedBalanceTypes.Contains(type);
+
+        // reference_date is a plain date in the API's examples, but last_change_date_time is a
+        // timestamp and some banks populate only that, so fall back to its date part rather than
+        // reporting a balance with no date at all.
+        DateOnly? referenceDate = null;
+        if (DateOnly.TryParse(b.ReferenceDate, CultureInfo.InvariantCulture, out var parsedDate))
+            referenceDate = parsedDate;
+        else if (DateTimeOffset.TryParse(
+                     b.LastChangeDateTime, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedStamp))
+            referenceDate = DateOnly.FromDateTime(parsedStamp.UtcDateTime);
+
+        return new EnableBankingBalance(
+            amount,
+            string.IsNullOrWhiteSpace(b.BalanceAmount.Currency) ? "DKK" : b.BalanceAmount.Currency,
+            type,
+            isBooked,
+            referenceDate);
+    }
+
     // Treated as booked when the bank says so, and also when it says nothing at all: a missing
     // status means the ASPSP doesn't report one, and dropping every entry from such a bank would
     // be far worse than the duplicate this guards against.

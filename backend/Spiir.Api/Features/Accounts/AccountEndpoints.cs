@@ -23,6 +23,7 @@ public static class AccountEndpoints
         group.MapPost("/connect", ConnectBank);
         group.MapPost("/finalize", FinalizeConnection);
         group.MapPatch("/{id:guid}", RenameAccount);
+        group.MapPost("/{id:guid}/refresh-balance", RefreshBalance);
         // Antiforgery protection (CSRF via ambient cookies) doesn't apply here — this endpoint is
         // authenticated by a Bearer token the browser never sends automatically, so there's no
         // ambient credential for a third-party site to ride on. DisableAntiforgery() opts out of
@@ -66,7 +67,67 @@ public static class AccountEndpoints
             a.Currency,
             a.LastSyncedAt,
             a.CreatedAt,
+            // The bank's own figure, with everything needed to say how much to trust it: which
+            // balance it is, the date it describes and when it was read. The client needs all
+            // three — a balance shown as a bare number is a claim about now that it can't support.
+            a.Balance,
+            a.BalanceCurrency,
+            a.BalanceType,
+            a.BalanceReferenceDate,
+            a.BalanceFetchedAt,
         }));
+    }
+
+    // An explicit, account-holder-initiated balance read.
+    //
+    // Sync fetches balances on a 12-hour clock to stay inside the PSD2 cap on *unattended* AISP
+    // access (see SyncEndpoints). This endpoint exists because that cap is about polling without
+    // the customer present: when the account holder asks for their balance, the request is
+    // attended, so it is not rationed the same way and doesn't need the gap.
+    private static async Task<IResult> RefreshBalance(
+        Guid id,
+        BankAccountRepository bankAccounts,
+        IEnableBankingClient eb,
+        ICurrentUser currentUser,
+        CancellationToken ct)
+    {
+        var userId = currentUser.GetRequiredUserId();
+        var account = await bankAccounts.GetByIdAsync(userId, id, ct);
+        if (account is null) return TypedResults.NotFound();
+
+        EnableBankingBalance? balance;
+        try
+        {
+            balance = await eb.GetBalanceAsync(account.ExternalAccountId, ct);
+        }
+        catch (Exception ex)
+        {
+            // Consent lapses after 90 days and the bank then refuses the read. Saying so beats a
+            // bare 502, because the fix is to reconnect the account rather than to retry.
+            return TypedResults.Problem(
+                $"Could not read the balance from the bank: {ex.Message} "
+                + "If the account's consent has expired, reconnect it and try again.",
+                statusCode: 502);
+        }
+
+        if (balance is null)
+            return TypedResults.Problem(
+                "The bank reported no balance for this account.", statusCode: 502);
+
+        var now = DateTime.UtcNow;
+        await bankAccounts.UpdateBalanceAsync(
+            userId, id, balance.Amount, balance.Currency,
+            balance.BalanceType, balance.ReferenceDate, now, ct);
+
+        return TypedResults.Ok(new
+        {
+            balance = balance.Amount,
+            balanceCurrency = balance.Currency,
+            balanceType = balance.BalanceType,
+            isBooked = balance.IsBooked,
+            balanceReferenceDate = balance.ReferenceDate,
+            balanceFetchedAt = now,
+        });
     }
 
     private static async Task<IResult> ConnectBank(

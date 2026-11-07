@@ -155,6 +155,39 @@ GoCardless's — and the connect flow has one fewer round trip: `POST /auth` ret
 (no separate "requisition" polling step), the user completes consent at their bank, and the callback's
 `code` query param is exchanged via `POST /sessions` for the account list.
 
+### Account balances
+
+The bank's own balance is stored on `BankAccounts` (`Schema/0013_AccountBalances.sql`:
+`Balance`, `BalanceCurrency`, `BalanceType`, `BalanceReferenceDate`, `BalanceFetchedAt`) and
+read by `IEnableBankingClient.GetBalanceAsync` → `GET /accounts/{uid}/balances`.
+
+This is a different figure from every other "balance" in the app. The dashboard's
+`Net balance (tracked)` and the net worth form's fallback suggestion are both
+`GetNetBalanceAsync` — a running sum of the transactions we hold, which stops wherever the
+served history stops. The stored `Balance` is the account's actual balance. Don't conflate
+them, and don't drop "tracked" from the KPI label.
+
+- **An account reports several balances and they are not interchangeable.** Booked
+  (`CLBD`/`ITBD`/`PRCD`) counts settled money; available (`CLAV`/`ITAV`) can include an
+  overdraft facility and entries in flight. Booked is preferred because transactions are
+  imported from `BOOK` entries only, so balance and history then describe the same money.
+  An available balance is a fallback and is labelled as such in the UI, never silently
+  substituted.
+- **Two dates, not one.** `BalanceReferenceDate` is what the figure describes;
+  `BalanceFetchedAt` is when we read it. They differ routinely, and collapsing them lets a
+  stale figure render as current. Any UI showing a balance shows its date.
+- **The sign is the bank's.** Negative means overdrawn; nothing normalises it, as in 0008.
+- **PSD2 budget.** A balance read is a second AISP access against the same ~4/day cap as the
+  transaction fetch, so sync reads balances on a 12-hour gap (`MinBalanceGap`) rather than
+  every 5-hour sync. `POST /accounts/{id}/refresh-balance` has no gap on purpose: that request
+  comes from the account holder, and the cap governs *unattended* polling. Never fetch a
+  balance on page load — same rule as sync.
+- **Net worth suggestions only use the balance when it describes the month being recorded**
+  (`NetWorthEndpoints.GetEntryForm`). Recording October on 5 November, a balance dated the 5th
+  is not October's closing figure, so the transaction sum is used instead. The response carries
+  `suggestedSource` (`bank` | `transactions`) and `suggestedAsOf` so the form can say which it
+  is showing. The recorded snapshot still always wins.
+
 ### CSV import (history older than Enable Banking can provide)
 
 `POST /accounts/{id}/import-csv` (`AccountEndpoints.ImportCsv`, `.DisableAntiforgery()` — Bearer-token
